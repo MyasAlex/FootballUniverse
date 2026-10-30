@@ -1757,7 +1757,19 @@ void Game::playMinute(LiveMatch& live,bool detailed){
 void Game::finishMatch(LiveMatch& live){
     Match& m=matches_.at(live.id);
     if(m.played)return;
-    m.played=true;m.homeGoals=live.goalsH;m.awayGoals=live.goalsA;m.shotsH=live.shotsH;m.shotsA=live.shotsA;m.xgH=live.xgH;m.xgA=live.xgA;m.events=live.events;
+    finalizeRatings(live);
+    m.played=true;
+    m.homeGoals=live.goalsH;m.awayGoals=live.goalsA;
+    m.shotsH=live.shotsH;m.shotsA=live.shotsA;
+    m.xgH=live.xgH;m.xgA=live.xgA;m.events=live.events;
+    m.playerStats=live.playerStats;
+    m.possessionH=live.minute>0?
+        std::clamp((live.possessionTicksH*100)/live.minute,0,100):50;
+    m.onTargetH=live.onTargetH;m.onTargetA=live.onTargetA;
+    m.passesH=live.passesH;m.passesA=live.passesA;
+    m.completedH=live.completedH;m.completedA=live.completedA;
+    m.foulsH=live.foulsH;m.foulsA=live.foulsA;
+    m.cornersH=live.cornersH;m.cornersA=live.cornersA;
     Club& h=clubs_[m.home];Club& a=clubs_[m.away];
     if(m.competition<0){
         h.gf+=live.goalsH;h.ga+=live.goalsA;a.gf+=live.goalsA;a.ga+=live.goalsH;
@@ -1782,6 +1794,7 @@ void Game::finishMatch(LiveMatch& live){
         int diff=wasHome?live.goalsH-live.goalsA:live.goalsA-live.goalsH;
         p.morale=clamp(p.morale+std::clamp(diff,-2,2));
     }
+    applyMatchDiscipline(m);
     processDeferredPayments();
     if(m.home==teamId_||m.away==teamId_){
         int diff=m.home==teamId_?live.goalsH-live.goalsA:live.goalsA-live.goalsH;
@@ -1802,16 +1815,74 @@ void Game::finishMatch(LiveMatch& live){
 }
 void Game::simulateFast(Match& match){
     LiveMatch l;l.id=match.id;initializeLineups(l,match);
-    int rh=rating(clubs_[match.home]),ra=rating(clubs_[match.away]);
-    int bias=clamp(50+(rh-ra)*2,15,85);
-    for(int min=1;min<=90;++min){l.minute=min;
-        if(random(1,100)<17){
-            bool home=random(1,100)<=bias;int chance=random(8,32);
-            if(home){l.shotsH++;l.xgH+=chance;if(random(1,100)<=chance)l.goalsH++;}
-            else {l.shotsA++;l.xgA+=chance;if(random(1,100)<=chance)l.goalsA++;}
+    const int rh=rating(clubs_[match.home]),ra=rating(clubs_[match.away]);
+    const int bias=clamp(50+(rh-ra)*2,15,85);
+    for(int minute=1;minute<=90;++minute){
+        l.minute=minute;
+        for(int id:l.homeXI)if(auto* st=statFor(l,id))++st->minutes;
+        for(int id:l.awayXI)if(auto* st=statFor(l,id))++st->minutes;
+        const bool home=random(1,100)<=bias;
+        if(home)++l.possessionTicksH;
+        const auto& attackers=home?l.homeXI:l.awayXI;
+        const auto& defenders=home?l.awayXI:l.homeXI;
+        for(int j=0;j<3;++j){
+            const int id=attackers[random(0,int(attackers.size()-1))];
+            const bool accurate=random(1,100)<=76;
+            if(auto* st=statFor(l,id)){
+                ++st->passes;if(accurate)++st->completedPasses;
+            }
+            int& passes=home?l.passesH:l.passesA;
+            int& completed=home?l.completedH:l.completedA;
+            ++passes;if(accurate)++completed;
+        }
+        if(random(1,100)<=17){
+            int chance=random(8,32);
+            std::vector<int> scorers;
+            for(int id:attackers)if(const Player* p=findPlayer(id);p&&p->position!="GK")
+                scorers.push_back(id);
+            if(scorers.empty())continue;
+            const int scorerId=scorers[random(0,int(scorers.size()-1))];
+            const bool goal=random(1,100)<=chance;
+            const bool onTarget=goal||random(1,100)<=55;
+            if(home){
+                ++l.shotsH;l.xgH+=chance;if(onTarget)++l.onTargetH;
+                if(goal)++l.goalsH;
+            }else{
+                ++l.shotsA;l.xgA+=chance;if(onTarget)++l.onTargetA;
+                if(goal)++l.goalsA;
+            }
+            if(auto* st=statFor(l,scorerId)){
+                ++st->shots;if(onTarget)++st->onTarget;
+                if(goal)++st->goals;
+            }
+            if(goal){
+                for(auto& p:players_)if(p.id==scorerId){++p.goals;break;}
+                if(attackers.size()>1){
+                    int index=random(0,int(attackers.size()-1));
+                    if(attackers[index]==scorerId)index=(index+1)%int(attackers.size());
+                    const int providerId=attackers[index];
+                    if(auto* st=statFor(l,providerId))++st->assists;
+                    for(auto& p:players_)if(p.id==providerId){++p.assists;break;}
+                }
+                if(l.events.size()<50)
+                    l.events.push_back({minute,"ГОЛ! "+clubs_[home?match.home:match.away].name+
+                                             " — автор гола #"+std::to_string(scorerId)});
+            }else if(onTarget){
+                for(int id:defenders)if(const Player* p=findPlayer(id);p&&p->position=="GK"){
+                    if(auto* st=statFor(l,id))++st->saves;break;
+                }
+            }
+        }
+        if(random(1,35)==1){
+            ++(home?l.foulsH:l.foulsA);
+            if(random(1,4)==1){
+                const int id=attackers[random(0,int(attackers.size()-1))];
+                if(auto* st=statFor(l,id))++st->tackles;
+            }
         }
     }
-    l.events.push_back({90,"Фоновая симуляция завершена. Итоговый счёт: "+std::to_string(l.goalsH)+":"+std::to_string(l.goalsA)});
+    l.events.push_back({90,"Фоновая симуляция завершена. Итоговый счёт: "+
+                             std::to_string(l.goalsH)+":"+std::to_string(l.goalsA)});
     finishMatch(l);
 }
 void Game::simulateOtherMatches(){
