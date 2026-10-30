@@ -1036,31 +1036,171 @@ std::string Game::cancelNegotiation(int playerId){
     return status_="Активных переговоров с этим футболистом нет.";
 }
 void Game::finalizeTransfer(TransferDeal& d){
-    Player* p=nullptr;
-    for(auto& candidate:players_)if(candidate.id==d.playerId){p=&candidate;break;}
-    if(!p||p->club!=d.sellerClub){
+    Player* player=nullptr;
+    for(auto& p:players_)if(p.id==d.playerId){player=&p;break;}
+    if(!player||player->club!=d.sellerClub||player->parentClub>=0){
         d.stage=DealStage::Rejected;
-        addMessage("Трансфер сорвался","Футболист больше не принадлежит клубу-продавцу.");
+        addMessage("Трансфер сорвался","Игрок больше не принадлежит клубу-продавцу.");
         return;
     }
-    const int extra=std::min(d.wage*2,40000000);
-    if(!canFinance(d.fee+extra)){
-        d.stage=DealStage::Rejected;
-        addMessage("Трансфер сорвался","Недостаточно средств для завершения сделки с "+p->name+".");
+    const int previousClub=player->club;
+    Club& seller=clubs_[previousClub],&buyer=myClub();
+    if(d.kind==1){
+        if(!canFinance(d.fee)){
+            d.stage=DealStage::Rejected;
+            addMessage("Аренда сорвалась","Не хватает денег на согласованный арендный платёж.");
+            return;
+        }
+        if(buyer.prestige+35<seller.prestige){
+            d.stage=DealStage::Rejected;
+            addMessage("Игрок отказался от аренды",player->name+
+                       " не хочет переходить в клуб со значительно более низким статусом.");
+            return;
+        }
+        buyer.budget-=d.fee;
+        seller.budget+=d.fee;
+        player->parentClub=previousClub;
+        player->club=teamId_;
+        player->loanReturnDay=totalDays_+d.loanDays;
+        player->loanWageShare=d.loanWageShare;
+        player->starter=false;
+        player->morale=clamp(player->morale+3);
+        d.stage=DealStage::Completed;
+        autoAssignCaptains();pickLineup(previousClub);pickLineup(teamId_);
+        addMessage("Аренда подтверждена",player->name+" переходит в "+buyer.name+
+                   " на "+std::to_string(d.loanDays)+" дней, оплата "+
+                   std::to_string(d.loanWageShare)+"% зарплаты и "+money(d.fee)+".");
         return;
     }
-    Club& seller=clubs_[d.sellerClub];
-    Club& buyer=myClub();
-    buyer.budget-=d.fee+extra;
-    seller.budget+=d.fee;
-    const int oldClub=p->club;
-    p->club=teamId_;p->starter=false;p->wage=d.wage;
-    p->contractYear=season_+d.years;p->morale=clamp(p->morale+5);
-    p->trust=clamp(p->trust+6);p->loyalty=clamp(p->loyalty+3);
+
+    Player* exchanged=nullptr;
+    int exchangeValue=0;
+    if(d.exchangePlayerId>=0){
+        for(auto& p:players_)if(p.id==d.exchangePlayerId){exchanged=&p;break;}
+        if(!exchanged||exchanged->club!=teamId_||exchanged->parentClub>=0){
+            d.stage=DealStage::Rejected;
+            addMessage("Обмен сорвался","Футболист, включённый в обмен, больше не доступен.");
+            return;
+        }
+        exchangeValue=exchanged->value*70/100;
+    }
+    const int signingBonus=std::min(d.wage*2,40000000);
+    const int upfront=d.fee/d.installments+(d.fee%d.installments);
+    if(!canFinance(upfront+signingBonus)){
+        d.stage=DealStage::Rejected;
+        addMessage("Трансфер сорвался","Не хватает средств на первый платёж и подъёмные.");
+        return;
+    }
+    // A cash-first payment plan is binding: later instalments are paid by date.
+    buyer.budget-=upfront+signingBonus;
+    seller.budget+=upfront;
+    for(int i=1;i<d.installments;++i){
+        const int amount=d.fee/d.installments;
+        if(amount>0)payments_.push_back({d.playerId,teamId_,previousClub,amount,totalDays_+i*30,0});
+    }
+    if(d.appearanceBonus>0)
+        payments_.push_back({d.playerId,teamId_,previousClub,d.appearanceBonus,-1,player->careerAppearances+10});
+    // A prior sell-on clause is owed by the selling club when the player changes owner.
+    if(player->sellOnClub>=0&&player->sellOnClub<int(clubs_.size())&&player->sellOnPct>0){
+        const int share=int(int64_t(d.fee+exchangeValue)*player->sellOnPct/100);
+        seller.budget-=share;clubs_[player->sellOnClub].budget+=share;
+    }
+    if(exchanged){
+        if(exchanged->sellOnClub>=0&&exchanged->sellOnClub<int(clubs_.size())&&exchanged->sellOnPct>0){
+            const int share=int(int64_t(exchangeValue)*exchanged->sellOnPct/100);
+            buyer.budget-=share;clubs_[exchanged->sellOnClub].budget+=share;
+        }
+        exchanged->club=previousClub;exchanged->starter=false;exchanged->sellOnClub=-1;
+        exchanged->sellOnPct=0;exchanged->releaseClause=0;exchanged->morale=clamp(exchanged->morale-2);
+    }
+    player->club=teamId_;player->starter=false;player->wage=d.wage;
+    player->contractYear=season_+d.years;
+    player->releaseClause=0;player->sellOnClub=d.sellOnPct?previousClub:-1;
+    player->sellOnPct=d.sellOnPct;
+    player->morale=clamp(player->morale+5);
+    player->trust=clamp(player->trust+6);player->loyalty=clamp(player->loyalty+3);
     d.stage=DealStage::Completed;
-    autoAssignCaptains();pickLineup(oldClub);pickLineup(teamId_);
-    addMessage("Трансфер завершён",p->name+" перешёл в "+buyer.name+" из "+seller.name+
-               " за "+money(d.fee)+". Зарплата "+money(d.wage)+" в неделю.");
+    autoAssignCaptains();pickLineup(previousClub);pickLineup(teamId_);
+    addMessage("Трансфер завершён",player->name+" перешёл в "+buyer.name+" из "+seller.name+
+               " за "+money(d.fee)+" ("+std::to_string(d.installments)+
+               " платежей). Зарплата "+money(d.wage)+" в неделю."+
+               (exchanged?" Дополнительно состоялся обмен игроками.":""));
+}
+void Game::processDeferredPayments(){
+    for(size_t i=0;i<payments_.size();){
+        const DeferredPayment p=payments_[i];
+        bool pay=false,discard=false;
+        if(p.triggerAppearances>0){
+            const Player* player=findPlayer(p.playerId);
+            if(!player||player->club!=p.buyerClub||player->parentClub>=0)discard=true;
+            else if(player->careerAppearances>=p.triggerAppearances)pay=true;
+        }else if(totalDays_>=p.dueDay)pay=true;
+        if(pay){
+            clubs_[p.buyerClub].budget-=p.amount;
+            clubs_[p.sellerClub].budget+=p.amount;
+            if(p.buyerClub==teamId_||p.sellerClub==teamId_)
+                addMessage(p.triggerAppearances>0?"Бонус за матчи":"Трансферный платёж",
+                    "Платёж "+money(p.amount)+" по игроку #"+std::to_string(p.playerId)+
+                    " перечислен клубу "+clubs_[p.sellerClub].name+".");
+        }
+        if(pay||discard)payments_.erase(payments_.begin()+i);
+        else ++i;
+    }
+}
+void Game::processLoanReturns(){
+    bool changed=false;
+    for(auto& p:players_)if(p.parentClub>=0&&p.loanReturnDay>=0&&totalDays_>=p.loanReturnDay){
+        const int from=p.club,to=p.parentClub;
+        p.club=to;p.parentClub=-1;p.loanReturnDay=-1;p.loanWageShare=100;p.starter=false;
+        changed=true;
+        if(from==teamId_||to==teamId_)
+            addMessage("Завершена аренда",p.name+" возвращается в "+
+                       clubs_[to].name+" после окончания арендного соглашения.");
+    }
+    if(changed){
+        autoAssignCaptains();
+        for(const auto& c:clubs_)pickLineup(c.id);
+    }
+}
+std::string Game::setReleaseClause(int playerId,int amount){
+    if(!permissionSports())return status_="Нет полномочий для изменения условий контракта.";
+    if(hasLiveMatch())return status_="Изменения контракта недоступны во время матча.";
+    Player* p=nullptr;for(auto& candidate:players_)if(candidate.id==playerId)p=&candidate;
+    if(!p||p->club!=teamId_||p->parentClub>=0)return status_="Выберите собственного футболиста.";
+    if(amount<0||amount>500000000)return status_="Отступные: от 0 до 500 млн €. Ноль отключает условие.";
+    if(amount>0&&amount<p->value)return status_="Отступные должны быть не ниже рыночной стоимости игрока.";
+    // Simple sandbox contract amendment. A negotiated extension is still handled separately.
+    p->releaseClause=amount;
+    addMessage("Контрактное условие",p->name+(amount?" получил отступные "+money(amount):" больше не имеет отступных."));
+    return status_=amount?"Отступные записаны в контракт.":"Условие выкупа удалено.";
+}
+std::string Game::sellPlayer(int playerId,int buyerClub,int amount){
+    if(!permissionSports())return status_="Нет полномочий продавать игроков.";
+    if(hasLiveMatch())return status_="Сначала завершите матч.";
+    Player* p=nullptr;for(auto& candidate:players_)if(candidate.id==playerId)p=&candidate;
+    if(!p||p->club!=teamId_||p->parentClub>=0)return status_="Можно продать только собственного футболиста.";
+    if(buyerClub<0||buyerClub>=int(clubs_.size())||buyerClub==teamId_)
+        return status_="Неверный ID клуба-покупателя.";
+    if(amount<1||amount>500000000)return status_="Цена продажи: 1–500 млн €.";
+    Club& buyer=clubs_[buyerClub];
+    if(buyer.budget<amount)return status_="У клуба "+buyer.name+" недостаточно средств.";
+    if(amount>int64_t(p->value)*160/100)
+        return status_="Клуб "+buyer.name+" отказался от завышенной цены.";
+    const int oldSellOnClub=p->sellOnClub;
+    const int oldSellOnPct=p->sellOnPct;
+    buyer.budget-=amount;
+    myClub().budget+=amount;
+    if(oldSellOnClub>=0&&oldSellOnClub<int(clubs_.size())&&oldSellOnPct>0){
+        const int share=int(int64_t(amount)*oldSellOnPct/100);
+        myClub().budget-=share;clubs_[oldSellOnClub].budget+=share;
+    }
+    const std::string name=p->name;
+    p->club=buyerClub;p->starter=false;p->releaseClause=0;
+    p->sellOnClub=-1;p->sellOnPct=0;p->morale=clamp(p->morale+2);
+    for(auto& d:deals_)if(d.playerId==playerId&&int(d.stage)<=4)d.stage=DealStage::Cancelled;
+    autoAssignCaptains();pickLineup(teamId_);pickLineup(buyerClub);
+    addMessage("Игрок продан",name+" перешёл в "+buyer.name+" за "+money(amount)+".");
+    return status_="Продажа завершена: "+name+" в "+buyer.name+".";
 }
 void Game::processTransferNegotiations(){
     for(auto& d:deals_){
