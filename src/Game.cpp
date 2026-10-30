@@ -59,7 +59,7 @@ int playerRating(const Player& p){
 Game::Game():rng_(20261030U){ newCareer("Менеджер", 0, Role::Coach, Difficulty::Realistic,{0,1}); }
 int Game::random(int lo,int hi){return std::uniform_int_distribution<int>(lo,hi)(rng_);}
 void Game::seedWorld(){
-    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();cups_.clear();trophies_.clear();leagueHistory_.clear();archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;live_={};
+    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();cups_.clear();trophies_.clear();leagueHistory_.clear();movements_.clear();coaches_.clear();job_={};reputation_=55;archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;live_={};
     const std::vector<std::tuple<std::string,std::string,std::vector<std::string>>> definitions={
       {"Англия","Премьер-лига",{"Арсенал","Ливерпуль","Манчестер Сити","Челси","Манчестер Юнайтед","Тоттенхэм"}},
       {"Испания","Ла Лига",{"Реал Мадрид","Барселона","Атлетико","Атлетик Бильбао","Вильярреал","Реал Сосьедад"}},
@@ -70,7 +70,7 @@ void Game::seedWorld(){
     };
     for(const auto& [country,league,teams]: definitions){
         int lid=static_cast<int>(leagues_.size());
-        leagues_.push_back({lid,country,league,false});
+        leagues_.push_back({lid,country,league,false,0,lid});
         for (size_t i=0;i<teams.size();++i){
             int id=static_cast<int>(clubs_.size());
             Club c;c.id=id;c.league=lid;c.name=teams[i];c.city=country;
@@ -82,6 +82,92 @@ void Game::seedWorld(){
             clubs_.push_back(std::move(c));
         }
     }
+    appendSecondDivisions(false);
+}
+void Game::appendSecondDivisions(bool addFixtures){
+    if(leagues_.size()>=12)return;
+    // Fictitious second-tier clubs: stable IDs 36..71, preserving all v0.8 club IDs.
+    const std::array<std::array<std::string,6>,6> secondTier={{{{
+        "Бристоль Атлетик","Шеффилд Таун","Ноттингем Сити",
+        "Лидс Роверс","Бирмингем Каунти","Кардифф Юнайтед"
+    }},{{
+        "Валенсия Норте","Севилья Атлетико","Кордова Сити",
+        "Малага Унион","Сарагоса Спорт","Овьедо Юнайтед"
+    }},{{
+        "Гамбург Атлетик","Бремен 04","Ганновер Шпорт",
+        "Кёльн Юнайтед","Нюрнберг Сити","Дрезден Атлетик"
+    }},{{
+        "Палермо Юнайтед","Генуя Спорт","Парма Атлетик",
+        "Болонья Норд","Бари Сити","Верона Олимпик"
+    }},{{
+        "Бордо Атлетик","Тулуза Юнион","Нант Сити",
+        "Ренн Олимпик","Сент-Этьен Спорт","Страсбург Юнайтед"
+    }},{{
+        "Иркутск Атлетик","Томск Сити","Саратов Юнайтед",
+        "Пермь Спорт","Омск Олимпик","Ярославль Атлетик"
+    }}}};
+    const std::array<std::string,6> lowerNames={
+        "Чемпионшип (демо)","Сегунда (демо)","Вторая Бундеслига (демо)",
+        "Серия Б (демо)","Лига 2 (демо)","Первая лига (демо)"
+    };
+    for(int top=0;top<6;++top){
+        leagues_[top].tier=0;leagues_[top].systemId=top;
+        const int lid=int(leagues_.size());
+        leagues_.push_back({lid,leagues_[top].country,lowerNames[top],
+                            leagues_[top].active,1,top});
+        for(int i=0;i<6;++i){
+            Club c;
+            c.id=int(clubs_.size());c.league=lid;c.city=leagues_[top].country;
+            c.name=secondTier[top][i];
+            c.prestige=clamp(49-i*3+random(-5,5),28,59);
+            c.budget=4000000+c.prestige*200000+random(0,3000000);
+            c.fans=clamp(40+c.prestige/3+random(-8,6));
+            c.board=66;c.stadium=10000+c.prestige*180;
+            c.sponsorship=50000+c.prestige*8000;
+            clubs_.push_back(std::move(c));
+        }
+    }
+    if(!addFixtures)return;
+    // Upgrade old saves without destroying their season, results, fixtures or player IDs.
+    const int oldClubs=int(clubs_.size())-36;
+    for(int cid=oldClubs;cid<int(clubs_.size());++cid){
+        const Club& c=clubs_[cid];
+        for(int i=0;i<24;++i){
+            Player p;p.id=nextPlayerId_++;p.club=cid;
+            p.name=firstNames[random(0,int(firstNames.size()-1))]+" "+
+                   lastNames[random(0,int(lastNames.size()-1))];
+            p.age=random(17,35);p.position=positions[i];
+            p.personality=character[random(0,int(character.size()-1))];
+            const int base=clamp(c.prestige-20+random(-13,15),25,82);
+            for(int& v:p.skill)v=clamp(base+random(-19,19),10,99);
+            if(p.position=="GK")p.skill[9]=clamp(base+random(4,20),30,99);
+            if(p.position=="ST")p.skill[1]=clamp(base+random(0,16),20,99);
+            if(p.position=="DC")p.skill[3]=clamp(base+random(0,16),20,99);
+            p.potential=clamp(base+random(6,24),30,99);
+            p.morale=random(46,85);p.fitness=random(74,100);
+            p.trust=random(36,75);p.loyalty=random(30,90);p.family=random(35,95);
+            p.wage=1000+base*base*2+random(0,10000);
+            p.value=100000+base*base*1500+random(100000,1000000);
+            p.contractYear=season_+random(1,5);
+            players_.push_back(std::move(p));
+        }
+        for(int role=0;role<4;++role){
+            StaffMember member;
+            member.id=nextStaffId_++;member.club=cid;member.role=role;
+            member.quality=clamp(38+c.prestige/3+random(-12,12),20,90);
+            member.weeklyWage=800+member.quality*65;
+            member.contractYear=season_+3;
+            member.name=firstNames[random(0,int(firstNames.size()-1))]+" "+
+                        lastNames[random(0,int(lastNames.size()-1))];
+            staff_.push_back(std::move(member));
+        }
+        pickLineup(cid);
+    }
+    autoAssignCaptains();
+    for(int lid=6;lid<12;++lid)addFixturesForLeague(lid);
+    // Simulate only past matches of newly introduced background divisions.
+    for(auto& match:matches_)if(match.competition==-1&&!match.played&&
+          clubs_[match.home].league>=6&&match.day<day_)simulateFast(match);
 }
 void Game::createSquads(){
     nextPlayerId_=1;
