@@ -19,6 +19,8 @@ struct Player {
     int releaseClause=0, sellOnClub=-1, sellOnPct=0;
     int parentClub=-1, loanReturnDay=-1, loanWageShare=100;
     int careerAppearances=0;
+    int developmentXP=0, mentorId=-1, developedSkills=0;
+    bool academyGraduate=false;
 };
 struct Club {
     int id=0, league=0;
@@ -56,6 +58,17 @@ struct DeferredPayment {
     int playerId=0, buyerClub=-1, sellerClub=-1, amount=0;
     int dueDay=0, triggerAppearances=0; // 0 = scheduled, positive = appearances milestone
 };
+struct StaffMember {
+    int id=0, club=0, role=0, quality=55, weeklyWage=3500, contractYear=2029;
+    std::string name;
+};
+struct YouthProspect {
+    int id=0, club=0, age=16, ability=43, potential=70;
+    std::string name, position;
+};
+struct Relationship {
+    int first=0, second=0, affinity=0, lastInteractionDay=-30;
+};
 struct LiveMatch {
     int id=-1, minute=0, goalsH=0, goalsA=0, shotsH=0, shotsA=0, xgH=0, xgA=0;
     int subsH=0, subsA=0;
@@ -81,6 +94,20 @@ public:
     const TransferDeal* transferDeal(int playerId) const;
     const std::vector<TransferDeal>& transferDeals() const { return deals_; }
     const std::vector<DeferredPayment>& deferredPayments() const { return payments_; }
+    const std::vector<StaffMember>& staff() const { return staff_; }
+    const std::vector<YouthProspect>& youthProspects() const { return youth_; }
+    const std::vector<Relationship>& relationships() const { return relations_; }
+    int staffQuality(int clubId,int role) const;
+    std::string staffText() const;
+    std::string academyText() const;
+    std::string developmentText(int playerId) const;
+    std::string relationshipsText(int playerId) const;
+    std::string hireStaff(int role,int quality);
+    std::string fireStaff(int staffId);
+    std::string discoverYouth();
+    std::string signYouthProspect(int prospectId);
+    std::string assignMentor(int youngPlayerId,int mentorPlayerId);
+    std::string improveRelationship(int firstPlayerId,int secondPlayerId,int type);
     std::string negotiationText(int playerId) const;
     std::string proposePlayerContract(int playerId, int weeklyWage, int years);
     std::string acceptNegotiationTerms(int playerId);
@@ -160,6 +187,14 @@ private:
     std::vector<ScoutReport> scouts_;
     std::vector<TransferDeal> deals_;
     std::vector<DeferredPayment> payments_;
+    std::vector<StaffMember> staff_;
+    std::vector<YouthProspect> youth_;
+    std::vector<Relationship> relations_;
+    int nextStaffId_=1,nextProspectId_=1,lastYouthSearchDay_=-45;
+    void seedStaff();
+    void generateYouth(int clubId,int count);
+    Relationship* getRelationship(int first,int second);
+    void pruneRelationships();
     void processDeferredPayments();
     void processLoanReturns();
     void processTransferNegotiations();
