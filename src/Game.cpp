@@ -59,7 +59,7 @@ int playerRating(const Player& p){
 Game::Game():rng_(20261030U){ newCareer("Менеджер", 0, Role::Coach, Difficulty::Realistic,{0,1}); }
 int Game::random(int lo,int hi){return std::uniform_int_distribution<int>(lo,hi)(rng_);}
 void Game::seedWorld(){
-    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;live_={};
+    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();cups_.clear();trophies_.clear();leagueHistory_.clear();archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;live_={};
     const std::vector<std::tuple<std::string,std::string,std::vector<std::string>>> definitions={
       {"Англия","Премьер-лига",{"Арсенал","Ливерпуль","Манчестер Сити","Челси","Манчестер Юнайтед","Тоттенхэм"}},
       {"Испания","Ла Лига",{"Реал Мадрид","Барселона","Атлетико","Атлетик Бильбао","Вильярреал","Реал Сосьедад"}},
@@ -563,7 +563,7 @@ void Game::newCareer(std::string manager,int clubId,Role role,Difficulty difficu
     createSquads();
     seedStaff();
     generateYouth(teamId_,4+myClub().academy/3);
-    autoAssignCaptains();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();
+    autoAssignCaptains();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();createCups();
     addMessage("Добро пожаловать в клуб","Сезон 2026/27 начался. Режим карьеры: собственная футбольная вселенная. База клубов демонстрационная, составы процедурные. Активные лиги симулируются подробно.");
     addMessage("Первые задачи","Изучите состав, настройте тактику, поговорите с футболистами и подготовьтесь к первому туру. Следующий день — на главной странице.");
     status_="Новая карьера создана";
@@ -758,8 +758,8 @@ void Game::archiveLeagueChampions(){
         if(teams.size()<2)continue;
         std::sort(teams.begin(),teams.end(),[this](int a,int b){
             const Club& first=clubs_[a];const Club& second=clubs_[b];
-            return std::tie(first.points,first.gf-first.ga,first.gf)>
-                   std::tie(second.points,second.gf-second.ga,second.gf);
+            return std::tuple(first.points,first.gf-first.ga,first.gf)>
+                   std::tuple(second.points,second.gf-second.ga,second.gf);
         });
         leagueHistory_.push_back({season_,league.id,teams[0],teams[1],clubs_[teams[0]].points});
     }
@@ -839,9 +839,6 @@ std::string Game::seasonHistoryText()const{
     if(!trophies_.empty()){
         out<<"\nКУБКОВЫЕ ПОБЕДИТЕЛИ\n";
         for(auto it=trophies_.rbegin();it!=trophies_.rend();++it){
-            const auto* match=std::find_if(archive_.begin(),archive_.end(),
-                [&](const Match& m){return m.season==it->season&&m.competition==it->cupId;});
-            (void)match;
             out<<it->season<<"/"<<(it->season+1)%100<<" • "
                <<(it->cupId==6?"Международный кубок":("Кубок: "+leagues_[it->cupId].country))
                <<": "<<clubs_[it->winner].name<<"\n";
@@ -875,8 +872,11 @@ std::string Game::dateString()const{
     return s.str();
 }
 const Match* Game::upcomingMatch()const{
-    for(const auto& m:matches_)if(!m.played&&(m.home==teamId_||m.away==teamId_))return &m;
-    return nullptr;
+    const Match* earliest=nullptr;
+    for(const auto& m:matches_)if(!m.played&&(m.home==teamId_||m.away==teamId_)){
+        if(!earliest||std::tie(m.day,m.id)<std::tie(earliest->day,earliest->id))earliest=&m;
+    }
+    return earliest;
 }
 bool Game::matchDue()const{auto m=upcomingMatch();return m&&m->day<=day_;}
 int Game::rating(const Club& club)const{
@@ -1180,7 +1180,21 @@ void Game::advance(int days){
     status_="Дата: "+dateString();
 }
 void Game::newSeason(){
-    int old=season_;
+    const int old=season_;
+    archiveLeagueChampions();
+    // Qualification: six league winners + two strongest runners-up.
+    std::vector<int> continental;
+    std::vector<int> runnersUp;
+    for(const auto& record:leagueHistory_)if(record.season==old){
+        continental.push_back(record.winner);
+        runnersUp.push_back(record.runnerUp);
+    }
+    std::sort(runnersUp.begin(),runnersUp.end(),[this](int a,int b){
+        const Club& x=clubs_[a],&y=clubs_[b];
+        return std::tuple(x.points,x.gf-x.ga,x.prestige)>
+               std::tuple(y.points,y.gf-y.ga,y.prestige);
+    });
+    for(int club:runnersUp)if(continental.size()<8)continental.push_back(club);
     season_++;day_=0;
     for(auto& c:clubs_){c.wins=c.draws=c.losses=c.gf=c.ga=c.points=0;c.budget+=c.sponsorship*4;}
     for(auto& p:players_){
@@ -1229,7 +1243,7 @@ void Game::newSeason(){
     for(const auto& m:matches_)if(m.played)archive_.push_back(m);
     autoAssignCaptains();
     for(const auto& c:clubs_)pickLineup(c.id);
-    createFixtures();live_={};
+    createFixtures();createCups(continental);live_={};
     addMessage("Новый сезон", "Сезон "+std::to_string(old)+"/"+std::to_string((old+1)%100)+" завершён. Начинается "+std::to_string(season_)+"/"+std::to_string((season_+1)%100)+". Регены добавлены, игроки постарели.");
     status_="Новый сезон "+std::to_string(season_);
 }
@@ -1314,10 +1328,19 @@ void Game::finishMatch(LiveMatch& live){
     if(m.played)return;
     m.played=true;m.homeGoals=live.goalsH;m.awayGoals=live.goalsA;m.shotsH=live.shotsH;m.shotsA=live.shotsA;m.xgH=live.xgH;m.xgA=live.xgA;m.events=live.events;
     Club& h=clubs_[m.home];Club& a=clubs_[m.away];
-    h.gf+=live.goalsH;h.ga+=live.goalsA;a.gf+=live.goalsA;a.ga+=live.goalsH;
-    if(live.goalsH>live.goalsA){h.wins++;a.losses++;h.points+=3;}
-    else if(live.goalsH<live.goalsA){a.wins++;h.losses++;a.points+=3;}
-    else {h.draws++;a.draws++;h.points++;a.points++;}
+    if(m.competition<0){
+        h.gf+=live.goalsH;h.ga+=live.goalsA;a.gf+=live.goalsA;a.ga+=live.goalsH;
+        if(live.goalsH>live.goalsA){h.wins++;a.losses++;h.points+=3;}
+        else if(live.goalsH<live.goalsA){a.wins++;h.losses++;a.points+=3;}
+        else {h.draws++;a.draws++;h.points++;a.points++;}
+    }else if(live.goalsH==live.goalsA){
+        // Guaranteed winner: a simplified shootout after 90 minutes.
+        const bool homeWins=random(0,1)==0;
+        m.penaltiesH=homeWins?random(4,6):random(2,3);
+        m.penaltiesA=homeWins?random(2,3):random(4,6);
+        m.events.push_back({90,"Серия пенальти: "+std::to_string(m.penaltiesH)+
+                            ":"+std::to_string(m.penaltiesA)});
+    }
     std::unordered_set<int> playedHome(live.usedHome.begin(),live.usedHome.end());
     std::unordered_set<int> playedAway(live.usedAway.begin(),live.usedAway.end());
     for(auto& p:players_){
@@ -1339,6 +1362,10 @@ void Game::finishMatch(LiveMatch& live){
     int attendance=clamp(h.fans+h.prestige-50,25,100)*h.stadium/100;
     int matchIncome=attendance*h.ticket+h.sponsorship;
     h.budget+=matchIncome;
+    if(m.competition>=0){
+        const int winningClub=knockoutWinner(m);
+        if(winningClub>=0)clubs_[winningClub].budget+=m.competition==6?180000:60000;
+    }
 }
 void Game::simulateFast(Match& match){
     LiveMatch l;l.id=match.id;initializeLineups(l,match);
@@ -1362,6 +1389,9 @@ void Game::simulateOtherMatches(){
         for(int minute=1;minute<=90;++minute){sim.minute=minute;playMinute(sim,true);}
         finishMatch(sim);
     }
+    // Append follow-up fixtures only AFTER iterating the match array.
+    // Reallocation during the range-for would invalidate its references.
+    progressCups();
 }
 bool Game::startLiveMatch(){
     if(hasLiveMatch()){status_="Матч уже начат.";return false;}
