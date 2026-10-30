@@ -1929,7 +1929,15 @@ std::string Game::matchText()const{
         o<<"ИДЁТ МАТЧ • "<<l.minute<<"'\n";
         o<<matchLabel(m)<<"\n\n";
         o<<clubs_[m.home].name<<"  "<<l.goalsH<<":"<<l.goalsA<<"  "<<clubs_[m.away].name<<"\n";
-        o<<"Удары: "<<l.shotsH<<"–"<<l.shotsA<<"   xG: "<<std::fixed<<std::setprecision(2)<<l.xgH/100.0<<"–"<<l.xgA/100.0<<"\n";
+        o<<"Удары (в створ): "<<l.shotsH<<" ("<<l.onTargetH<<") — "
+         <<l.shotsA<<" ("<<l.onTargetA<<")\n";
+        o<<"xG: "<<std::fixed<<std::setprecision(2)<<l.xgH/100.0<<"–"<<l.xgA/100.0<<"\n";
+        o<<"Владение: "<<(l.minute?l.possessionTicksH*100/l.minute:50)
+         <<"% — "<<(l.minute?100-l.possessionTicksH*100/l.minute:50)<<"%\n";
+        o<<"Передачи: "<<l.completedH<<"/"<<l.passesH<<" — "
+         <<l.completedA<<"/"<<l.passesA<<"\n";
+        o<<"Фолы: "<<l.foulsH<<" — "<<l.foulsA
+         <<" | угловые: "<<l.cornersH<<" — "<<l.cornersA<<"\n";
         o<<"Тактика: "<<tactics[myClub().tactic]<<"\n";
         o<<"Замены: "<<(m.home==teamId_?l.subsH:l.subsA)<<"/5\n";
         o<<"\nНА ПОЛЕ (ID): ";
@@ -1948,7 +1956,100 @@ std::string Game::matchText()const{
         o<<"До матча: "<<std::max(0,m->day-day_)<<" дн.\n\n";
         o<<"До игрового дня можно переключиться через «Следующий день».\n";
     }else o<<"Матчей в текущем календаре больше нет.\n";
+    if(!hasLiveMatch()&&lastPlayedMatchForClub())
+        o<<"\nПОСЛЕДНИЙ МАТЧ\n"<<latestMatchReport();
     return o.str();
+}
+namespace {
+std::string renderMatchReport(const Match& m,const std::vector<Club>& clubs,
+                              const std::vector<Player>& players){
+    if(!m.played)return "Матч ещё не завершён.\n";
+    std::ostringstream out;
+    out<<"ПОСЛЕМАТЧЕВЫЙ РАЗБОР • "<<m.season<<"/"<<(m.season+1)%100
+       <<" • день "<<m.day<<"\n";
+    out<<clubs[m.home].name<<"   "<<m.homeGoals<<":"<<m.awayGoals
+       <<"   "<<clubs[m.away].name<<"\n";
+    if(m.penaltiesH>=0)out<<"Пенальти "<<m.penaltiesH<<":"<<m.penaltiesA<<"\n";
+    out<<"Владение мячом: "<<m.possessionH<<"% / "<<100-m.possessionH<<"%\n";
+    out<<"Удары / в створ: "<<m.shotsH<<"/"<<m.onTargetH<<" — "
+       <<m.shotsA<<"/"<<m.onTargetA<<"\n";
+    out<<"xG: "<<std::fixed<<std::setprecision(2)<<m.xgH/100.0
+       <<" — "<<m.xgA/100.0<<"\n";
+    out<<"Передачи: "<<m.completedH<<"/"<<m.passesH<<" — "
+       <<m.completedA<<"/"<<m.passesA<<"\n";
+    out<<"Фолы: "<<m.foulsH<<" — "<<m.foulsA
+       <<" | Угловые: "<<m.cornersH<<" — "<<m.cornersA<<"\n";
+    if(!m.playerStats.empty()){
+        std::vector<const MatchPlayerStat*> ranking;
+        for(const auto& p:m.playerStats)ranking.push_back(&p);
+        std::sort(ranking.begin(),ranking.end(),[](const auto* a,const auto* b){
+            return std::tie(a->rating10,a->goals,a->assists)>
+                   std::tie(b->rating10,b->goals,b->assists);
+        });
+        auto getPlayer=[&](int playerId)->std::string{
+            for(const auto& p:players)if(p.id==playerId)return p.name;
+            return "Футболист #"+std::to_string(playerId);
+        };
+        if(!ranking.empty()){
+            out<<"\nИГРОК МАТЧА: "<<getPlayer(ranking.front()->playerId)
+               <<" | оценка "<<ranking.front()->rating10/10.0<<"\n";
+        }
+        for(int clubId:{m.home,m.away}){
+            out<<"\n"<<clubs[clubId].name<<" — ОЦЕНКИ ИГРОКОВ\n";
+            for(const auto* st:ranking){
+                auto it=std::find_if(players.begin(),players.end(),[&](const Player& p){
+                    return p.id==st->playerId;
+                });
+                // For players sold after the fixture, still include their archived stats.
+                const bool belongs=it!=players.end()&&it->club==clubId;
+                if(!belongs)continue;
+                out<<"  "<<std::fixed<<std::setprecision(1)<<st->rating10/10.0
+                   <<"  "<<getPlayer(st->playerId)<<" ("<<st->minutes<<"')"
+                   <<" | голы "<<st->goals<<" передачи "<<st->assists
+                   <<" | удары "<<st->shots<<" ("<<st->onTarget<<" ств.)"
+                   <<" | пас "<<st->completedPasses<<"/"<<st->passes
+                   <<" | отборы "<<st->tackles<<" сейвы "<<st->saves;
+                if(st->yellows)out<<" | ЖК "<<st->yellows;
+                if(st->reds)out<<" | КК "<<st->reds;
+                out<<"\n";
+            }
+        }
+    }else out<<"\nДля старых матчей индивидуальная статистика недоступна.\n";
+    out<<"\nКЛЮЧЕВЫЕ СОБЫТИЯ\n";
+    int count=0;
+    for(const auto& e:m.events)if(e.text.find("ГОЛ!")!=std::string::npos||
+        e.text.find("карточ")!=std::string::npos||
+        e.text.find("КАРТОЧ")!=std::string::npos||
+        e.text.find("ТРАВМА")!=std::string::npos||
+        e.text.find("ЗАМЕНА")!=std::string::npos||
+        e.text.find("пенальти")!=std::string::npos){
+        if(++count>35){out<<"  ...\n";break;}
+        out<<"  "<<e.minute<<"' "<<e.text<<"\n";
+    }
+    if(!count)out<<"  Без заметных событий.\n";
+    return out.str();
+}
+}
+const Match* Game::lastPlayedMatchForClub()const{
+    const Match* latest=nullptr;
+    auto consider=[&](const Match& m){
+        if(!m.played||(m.home!=teamId_&&m.away!=teamId_))return;
+        if(!latest||std::tie(m.season,m.day,m.id)>
+                    std::tie(latest->season,latest->day,latest->id))latest=&m;
+    };
+    for(const auto& m:archive_)consider(m);
+    for(const auto& m:matches_)consider(m);
+    return latest;
+}
+std::string Game::matchReport(int matchId)const{
+    if(matchId<0||matchId>=int(matches_.size()))
+        return "Матч с таким ID не найден в текущем сезоне.";
+    return renderMatchReport(matches_[matchId],clubs_,players_);
+}
+std::string Game::latestMatchReport()const{
+    const auto* last=lastPlayedMatchForClub();
+    if(!last)return "Ваш клуб ещё не провёл ни одного матча.";
+    return renderMatchReport(*last,clubs_,players_);
 }
 std::string Game::matchArchive()const{
     std::ostringstream o;o<<"АРХИВ МАТЧЕЙ СЕЗОНА "<<season_<<"/"<<(season_+1)%100<<"\n\n";
