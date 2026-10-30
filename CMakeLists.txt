@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FootballUniverse VERSION 0.3.1 LANGUAGES CXX)
+project(FootballUniverse VERSION 0.4.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Link the MSVC runtime statically so players do not need Visual C++ installed.
@@ -37,3 +37,8 @@ set_tests_properties(core_simulation PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRE
 add_executable(fu_lineup_tests tests/test_lineup.cpp)
 target_link_libraries(fu_lineup_tests PRIVATE fu_core)
 add_test(NAME match_lineup_and_substitutions COMMAND fu_lineup_tests)
+
+add_executable(fu_features_tests tests/test_features.cpp)
+target_link_libraries(fu_features_tests PRIVATE fu_core)
+add_test(NAME scouting_captaincy_team_talks COMMAND fu_features_tests)
+set_tests_properties(scouting_captaincy_team_talks PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
