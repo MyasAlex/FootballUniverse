@@ -598,6 +598,8 @@ void showPage(int next){
 }
 void showSetup(){
     trace("showSetup BEGIN");
+    autoPlayMatch=false;
+    previousPitch={};currentPitch={};
     started=false;page=-1;
     for(auto& w:nav)show(w,false);
     for(auto& w:actions)show(w,false);
@@ -886,7 +888,8 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
                 }else autoPlayMatch=false;
             }
             updatePitchFrame();
-            if(showPitch&&pitchWindow)
+            if(showPitch&&pitchWindow&&
+               (autoPlayMatch||now-pitchTransitionTick<1200))
                 InvalidateRect(pitchWindow,nullptr,FALSE);
         }
         return 0;
@@ -945,7 +948,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int showCommand){
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"FootballUniverseDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     wc.hbrBackground=backgroundBrush;RegisterClassExW(&wc);
-    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe — C++ Prototype 0.3",
+    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.11 — анимированный футбольный менеджер",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,840,nullptr,nullptr,instance,nullptr);
     if(!window){MessageBoxW(nullptr,L"Не удалось создать окно",L"Ошибка",MB_ICONERROR);return 1;}
     trace("window CREATED");ShowWindow(window,showCommand);trace("window SHOWN");UpdateWindow(window);trace("window UPDATED");
