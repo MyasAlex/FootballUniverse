@@ -35,7 +35,7 @@ jobs:
           start "" "FootballUniverse.exe"
           '@ | Set-Content "$folder/PLAY.bat" -Encoding Ascii
           @'
-          Football Universe 0.5 - Windows x64
+          Football Universe 0.6 - Windows x64
           Run PLAY.bat or FootballUniverse.exe.
           C++ and Visual Studio are NOT required to run.
           Save files (career.fus) remain in the game folder if started through PLAY.bat.
