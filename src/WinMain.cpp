@@ -45,11 +45,12 @@ ULONG_PTR gdiplusToken{};
 constexpr COLORREF background=RGB(13,21,35),surface=RGB(23,35,54),primary=RGB(57,112,221),accent=RGB(67,202,179),white=RGB(233,239,247),muted=RGB(160,174,196);
 int page=-1;
 bool started=false, showPitch=false, shortlistOnly=false;
+int historyView=0; // 0 calendar, 1 cups, 2 winners, 3 scorers
 std::vector<int> visibleIds;
 std::vector<int> activeNavigation;
 int lastListIndex=0;
 std::wstring detailText;
-const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"История матчей",L"Настройки",L"Помощь"};
+const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Помощь"};
 const int NAV_START=100, ACTION_START=300, LIST_ID=501, SETUP_START=600, SETUP_LOAD=601, SETUP_CLUB=602, SETUP_LEAGUES=603;
 std::string saveFile="career.fus";
 
@@ -174,7 +175,7 @@ std::vector<std::wstring> buttonTexts(int p){
         case 2:return {L"Сменить схему",L"Сменить стиль",L"Тренировки",L"Матч",L"Обновить"};
         case 3:return {L"План команды",L"Фокус игрока",L"Состав",L"День +1",L"Наставник"};
         case 4:return {L"Начать матч",L"+15 минут",L"Мгновенно",L"Сменить тактику",L"2D / текст"};
-        case 5:return {L"Лига клуба",L"Другая лига",L"Обновить",L"—",L"—"};
+        case 5:return {L"Лига клуба",L"Другая лига",L"Кубки",L"Календарь",L"Обновить"};
         case 6:return {L"Оффер / аренда",L"Скаутировать",L"В список / убрать",L"Короткий список",L"Принять условия"};
         case 7:return {L"Контракт",L"Состав",L"Продать",L"Отступные",L"—"};
         case 8:return {L"Отправить текст",L"Похвалить",L"Помочь семье",L"Собрание",L"Похвала команде"};
@@ -182,7 +183,7 @@ std::vector<std::wstring> buttonTexts(int p){
         case 10:return {L"Стадион",L"Трениров. база",L"Академия",L"Спонсор",L"Билет +5 €"};
         case 11:return {L"Подписать игрока",L"Поиск талантов",L"Нанять штаб",L"Наставник",L"Отношения"};
         case 12:return {L"Обновить",L"Обзор",L"—",L"—",L"—"};
-        case 13:return {L"Обновить",L"Матч",L"—",L"—",L"—"};
+        case 13:return {L"Календарь",L"Кубки",L"Победители",L"Бомбардиры",L"Матч"};
         case 14:return {L"Вкл./выкл. лигу",L"Новая карьера",L"Сохранить",L"Загрузить",L"Импорт CSV"};
         default:return {L"Обзор",L"—",L"—",L"—",L"—"};
     }
@@ -362,6 +363,8 @@ void showPage(int next){
     if(!started)return;
     page=std::clamp(next,0,15);
     lastListIndex=0;
+    // Owner-draw nav does not automatically repaint when a different page is selected.
+    for(auto& button:nav)if(button)InvalidateRect(button,nullptr,TRUE);
     bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==12||page==14;
     show(listControl,listNeeded);show(inputControl,page==1||page==6||page==7||page==8||page==9||page==11||page==3||(page==4&&game().hasLiveMatch()));
     show(pitchWindow,page==4&&showPitch);
@@ -400,7 +403,12 @@ void showPage(int next){
         case 4:textContent(game().matchText());break;
         case 9:textContent("БОЛЕЛЬЩИКИ\n\nТекущая поддержка: "+std::to_string(game().myClub().fans)+"/100\n\nНапишите своё обращение в поле ниже.\nРеакции имеют последствия для доверия, посещаемости и отношений внутри клуба.\n\nТекст понимается через локальные правила (без облачного ИИ).");break;
         case 10:textContent(game().financesText());break;
-        case 13:textContent(game().matchArchive());break;
+        case 13:
+            if(historyView==0)textContent(game().calendarText());
+            else if(historyView==1)textContent(game().cupsText());
+            else if(historyView==2)textContent(game().seasonHistoryText());
+            else textContent(game().scorersText());
+            break;
         case 15:textContent(game().helpText());break;
     }
     tell(game().status());arrange();InvalidateRect(pitchWindow,nullptr,TRUE);InvalidateRect(clubLogoWindow,nullptr,TRUE);
@@ -490,6 +498,8 @@ void trigger(int action){
     }else if(page==5){
         if(action==0){id=game().myClub().league;lastListIndex=id;}
         if(action==1)lastListIndex=(lastListIndex+1)%int(game().leagues().size());
+        if(action==2){historyView=1;go(13);return;}
+        if(action==3){historyView=0;go(13);return;}
     }else if(page==6){
         if(action==0){
             const auto* deal=game().transferDeal(id);
@@ -584,7 +594,10 @@ void trigger(int action){
             catch(...){response="Укажите ID сотрудника для увольнения.";}
         }
     }else if(page==12){if(action==1){go(0);return;}}
-    else if(page==13){if(action==1){go(4);return;}}
+    else if(page==13){
+        if(action>=0&&action<=3)historyView=action;
+        if(action==4){go(4);return;}
+    }
     else if(page==14){
         if(action==0)game().toggleLeague(id);
         if(action==1){showSetup();return;}
@@ -612,7 +625,10 @@ void drawButton(const DRAWITEMSTRUCT* dis){
     wchar_t text[256];GetWindowTextW(dis->hwndItem,text,256);
     SetBkMode(dc,TRANSPARENT);SetTextColor(dc,white);SelectObject(dc,uiFont);
     DrawTextW(dc,text,-1,&r,DT_SINGLELINE|DT_CENTER|DT_VCENTER|DT_END_ELLIPSIS);
-    if(dis->itemState&ODS_FOCUS){RECT focus=r;InflateRect(&focus,-3,-3);DrawFocusRect(dc,&focus);}
+    // Focus on an old nav button must not look like a second selected page.
+    if(!navButton&&(dis->itemState&ODS_FOCUS)){
+        RECT focus=r;InflateRect(&focus,-3,-3);DrawFocusRect(dc,&focus);
+    }
 }
 LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     switch(msg){
