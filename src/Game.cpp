@@ -261,6 +261,260 @@ std::vector<int> Game::leagueClubs(int leagueId) const {
     for(const auto& c:clubs_)if(c.league==leagueId)result.push_back(c.id);
     return result;
 }
+
+namespace {
+const std::array<std::string,4> staffTitles={"Тренер","Врач","Скаут","Тренер академии"};
+}
+void Game::seedStaff(){
+    staff_.clear();nextStaffId_=1;
+    for(const auto& c:clubs_){
+        for(int role=0;role<4;++role){
+            StaffMember member;
+            member.id=nextStaffId_++;
+            member.club=c.id;member.role=role;
+            member.quality=clamp(38+c.prestige/3+random(-12,12),20,90);
+            member.weeklyWage=800+member.quality*65;
+            member.contractYear=season_+3;
+            member.name=firstNames[random(0,int(firstNames.size()-1))]+" "+
+                        lastNames[random(0,int(lastNames.size()-1))];
+            staff_.push_back(std::move(member));
+        }
+    }
+}
+int Game::staffQuality(int clubId,int role)const{
+    if(clubId<0||clubId>=int(clubs_.size())||role<0||role>3)return 0;
+    int best=0;
+    for(const auto& s:staff_)
+        if(s.club==clubId&&s.role==role)best=std::max(best,s.quality);
+    return best;
+}
+std::string Game::staffText()const{
+    std::ostringstream o;
+    o<<"ШТАБ КЛУБА "<<myClub().name<<"\n\n";
+    for(const auto& s:staff_)if(s.club==teamId_){
+        o<<"#"<<s.id<<" | "<<staffTitles[s.role]<<" | "<<s.name
+         <<" | качество "<<s.quality<<"/100 | "<<money(s.weeklyWage)
+         <<" в неделю | до "<<s.contractYear<<"\n";
+    }
+    o<<"\nЭффекты: тренер ускоряет обучение, врач восстановление и снижает риск травмы,\n"
+      <<"скаут повышает точность отчётов, наставник академии помогает молодым талантам.\n"
+      <<"Нанять сотрудника: введите роль 0–3 и желаемое качество, например 1 80.\n"
+      <<"Уволить: введите ID сотрудника и нажмите «Уволить».\n";
+    return o.str();
+}
+std::string Game::hireStaff(int role,int quality){
+    if(!permissionSports()&&!permissionBusiness())
+        return status_="Нет полномочий назначать сотрудников.";
+    if(hasLiveMatch())return status_="Во время матча менять штаб нельзя.";
+    if(role<0||role>3||quality<20||quality>100)
+        return status_="Роль 0–3, качество 20–100 (пример: 1 80).";
+    int count=0;
+    for(const auto& s:staff_)if(s.club==teamId_&&s.role==role)++count;
+    if(count>=3)return status_="На этой позиции в клубе уже три сотрудника.";
+    const int fee=quality*12000;
+    if(!canFinance(fee))return status_="Найм требует "+money(fee)+".";
+    myClub().budget-=fee;
+    StaffMember member;
+    member.id=nextStaffId_++;member.club=teamId_;member.role=role;
+    member.quality=quality;member.weeklyWage=1000+quality*85;
+    member.contractYear=season_+3;
+    member.name=firstNames[random(0,int(firstNames.size()-1))]+" "+
+                lastNames[random(0,int(lastNames.size()-1))];
+    staff_.push_back(member);
+    status_="Нанят "+staffTitles[role]+" "+member.name+
+            " ("+std::to_string(quality)+"/100), компенсация "+money(fee)+".";
+    addMessage("Новое назначение",status_);
+    return status_;
+}
+std::string Game::fireStaff(int staffId){
+    if(!permissionSports()&&!permissionBusiness())
+        return status_="Нет полномочий увольнять сотрудников.";
+    if(hasLiveMatch())return status_="Во время матча менять штаб нельзя.";
+    for(size_t i=0;i<staff_.size();++i)if(staff_[i].id==staffId&&staff_[i].club==teamId_){
+        const int fee=staff_[i].weeklyWage*4;
+        if(!canFinance(fee))return status_="Нет денег на выходное пособие "+money(fee)+".";
+        const std::string name=staff_[i].name;
+        myClub().budget-=fee;
+        staff_.erase(staff_.begin()+i);
+        status_=name+" покинул штаб. Выплачена компенсация "+money(fee)+".";
+        addMessage("Увольнение специалиста",status_);
+        return status_;
+    }
+    return status_="Сотрудник с таким ID в вашем штабе не найден.";
+}
+void Game::generateYouth(int clubId,int count){
+    if(clubId<0||clubId>=int(clubs_.size()))return;
+    const Club& c=clubs_[clubId];
+    for(int i=0;i<count;++i){
+        YouthProspect p;
+        p.id=nextProspectId_++;p.club=clubId;p.age=random(16,18);
+        p.name=firstNames[random(0,int(firstNames.size()-1))]+" "+
+               lastNames[random(0,int(lastNames.size()-1))];
+        p.position=positions[random(0,int(positions.size()-1))];
+        const int coach=staffQuality(clubId,3);
+        p.ability=clamp(28+c.academy*3+coach/18+random(-8,12),20,78);
+        p.potential=clamp(p.ability+10+c.academy+coach/14+random(3,23),35,99);
+        youth_.push_back(std::move(p));
+    }
+}
+std::string Game::academyText()const{
+    std::ostringstream o;
+    o<<"МОЛОДЁЖНАЯ АКАДЕМИЯ | "<<myClub().name<<"\n\n";
+    o<<"Уровень академии: "<<myClub().academy<<"/10 | Тренер молодёжи: "
+     <<staffQuality(teamId_,3)<<"/100\n";
+    o<<"Талантов для просмотра: ";
+    int count=0;
+    for(const auto& p:youth_)if(p.club==teamId_)++count;
+    o<<count<<"\n";
+    for(const auto& p:youth_)if(p.club==teamId_)
+        o<<"#"<<p.id<<" | "<<p.name<<" | "<<p.age<<" лет | "<<p.position
+         <<" | уровень "<<p.ability<<" | потенциал ~"<<p.potential<<"\n";
+    o<<"\nПодписать юниора: выберите кандидата слева (350 тыс. €).\n"
+     <<"Поиск талантов: новые кандидаты каждые 30 дней (100 тыс. €).\n"
+     <<"Наставник: укажите ID молодого и опытного игроков через пробел.\n"
+     <<"Отношения: ID двух игроков и тип 0 (поддержка), 1 (примирение), 2 (конкуренция).\n\n";
+    o<<staffText();
+    return o.str();
+}
+std::string Game::discoverYouth(){
+    if(!permissionSports())return status_="Нет полномочий руководить поиском молодёжи.";
+    if(hasLiveMatch())return status_="Поиск недоступен во время матча.";
+    if(totalDays_-lastYouthSearchDay_<30)
+        return status_="Новый просмотр доступен через "+
+               std::to_string(30-(totalDays_-lastYouthSearchDay_))+" дн.";
+    const int cost=100000;
+    if(!canFinance(cost))return status_="Для просмотра требуется "+money(cost)+".";
+    myClub().budget-=cost;
+    lastYouthSearchDay_=totalDays_;
+    youth_.erase(std::remove_if(youth_.begin(),youth_.end(),
+        [this](const YouthProspect& p){return p.club==teamId_;}),youth_.end());
+    generateYouth(teamId_,4+myClub().academy/3);
+    status_="Академия представила новый список талантов. Посмотрите его во вкладке «Академия».";
+    addMessage("Просмотр молодых футболистов",status_);
+    return status_;
+}
+std::string Game::signYouthProspect(int prospectId){
+    if(!permissionSports())return status_="Нет полномочий заключать молодёжные контракты.";
+    if(hasLiveMatch())return status_="Во время матча академия недоступна.";
+    const auto it=std::find_if(youth_.begin(),youth_.end(),
+        [&](const YouthProspect& p){return p.id==prospectId&&p.club==teamId_;});
+    if(it==youth_.end())return status_="Выберите воспитанника из списка академии.";
+    constexpr int cost=350000;
+    if(!canFinance(cost))return status_="На контракт молодому игроку требуется 350 тыс. €.";
+    const YouthProspect prospect=*it;
+    myClub().budget-=cost;
+    Player p;
+    p.id=nextPlayerId_++;p.club=teamId_;p.age=prospect.age;
+    p.name=prospect.name;p.position=prospect.position;
+    p.personality=character[random(0,int(character.size()-1))];
+    for(int& skill:p.skill)skill=clamp(prospect.ability+random(-12,12),10,99);
+    if(p.position=="GK")p.skill[9]=clamp(prospect.ability+random(2,12),20,99);
+    p.potential=clamp(prospect.potential+random(-3,3));
+    p.wage=1100+prospect.ability*40;
+    p.value=120000+prospect.ability*14500;
+    p.contractYear=season_+4;
+    p.academyGraduate=true;
+    players_.push_back(p);
+    youth_.erase(it);
+    pickLineup(teamId_);
+    status_="Из академии приглашён "+p.name+", "+std::to_string(p.age)+
+            " лет. Потенциал "+std::to_string(p.potential)+"/100.";
+    addMessage("Подписан молодой талант",status_);
+    return status_;
+}
+Relationship* Game::getRelationship(int first,int second){
+    if(first==second)return nullptr;
+    if(first>second)std::swap(first,second);
+    for(auto& r:relations_)
+        if(r.first==first&&r.second==second)return &r;
+    relations_.push_back({first,second,0,-30});
+    return &relations_.back();
+}
+void Game::pruneRelationships(){
+    relations_.erase(std::remove_if(relations_.begin(),relations_.end(),[this](const Relationship& r){
+        const Player* a=findPlayer(r.first);
+        const Player* b=findPlayer(r.second);
+        return !a||!b||a->club!=b->club;
+    }),relations_.end());
+    for(auto& p:players_)if(p.mentorId>=0){
+        const Player* mentor=findPlayer(p.mentorId);
+        if(!mentor||mentor->club!=p.club||mentor->age<25)p.mentorId=-1;
+    }
+}
+std::string Game::assignMentor(int youngId,int mentorId){
+    if(!permissionSports())return status_="Нет полномочий назначать наставников.";
+    if(hasLiveMatch())return status_="Во время матча менять наставника нельзя.";
+    Player* young=nullptr;const Player* experienced=findPlayer(mentorId);
+    for(auto& p:players_)if(p.id==youngId)young=&p;
+    if(!young||!experienced||young->club!=teamId_||experienced->club!=teamId_||
+       young->age>23||experienced->age<25||youngId==mentorId)
+        return status_="Нужно выбрать своего молодого игрока (до 23 лет) и наставника от 25 лет.";
+    int mentees=0;
+    for(const auto& p:players_)if(p.mentorId==mentorId&&p.id!=youngId)++mentees;
+    if(mentees>=3)return status_="Наставник уже занимается тремя футболистами.";
+    young->mentorId=mentorId;
+    young->trust=clamp(young->trust+3);
+    Relationship* r=getRelationship(youngId,mentorId);
+    if(r)r->affinity=clamp(r->affinity+15,-100,100);
+    status_=experienced->name+" назначен наставником "+young->name+".";
+    addMessage("Программа наставничества",status_);
+    return status_;
+}
+std::string Game::improveRelationship(int firstId,int secondId,int type){
+    if(!permissionSports())return status_="Нет полномочий проводить встречи игроков.";
+    if(hasLiveMatch())return status_="Завершите матч перед встречей.";
+    if(type<0||type>2)return status_="Тип встречи 0–2.";
+    const Player* a=findPlayer(firstId),*b=findPlayer(secondId);
+    if(!a||!b||firstId==secondId||a->club!=teamId_||b->club!=teamId_)
+        return status_="Выберите двух разных игроков своей команды.";
+    Relationship* r=getRelationship(firstId,secondId);
+    if(!r)return status_="Невозможно создать встречу.";
+    if(totalDays_-r->lastInteractionDay<7)
+        return status_="Эта пара недавно общалась. Новая встреча через "+
+               std::to_string(7-(totalDays_-r->lastInteractionDay))+" дней.";
+    r->lastInteractionDay=totalDays_;
+    const int original=r->affinity;
+    const int delta=type==2?-12:type==1?25:15;
+    r->affinity=clamp(r->affinity+delta,-100,100);
+    for(auto& p:players_)if(p.id==firstId||p.id==secondId){
+        p.morale=clamp(p.morale+(delta>0?2:-2));
+        p.trust=clamp(p.trust+(delta>0?1:-2));
+    }
+    const std::string label=type==0?"Командная поддержка":type==1?"Примирение":"Внутренняя конкуренция";
+    status_=label+": отношения "+std::to_string(original)+" → "+std::to_string(r->affinity)+".";
+    addMessage("Событие в раздевалке",a->name+" и "+b->name+": "+status_);
+    return status_;
+}
+std::string Game::relationshipsText(int playerId)const{
+    const Player* player=findPlayer(playerId);
+    if(!player)return "Футболист не найден.";
+    std::ostringstream o;
+    o<<"ОТНОШЕНИЯ В КОМАНДЕ: "<<player->name<<"\n";
+    int count=0;
+    for(const auto& r:relations_)if(r.first==playerId||r.second==playerId){
+        const Player* other=findPlayer(r.first==playerId?r.second:r.first);
+        if(!other||other->club!=player->club)continue;
+        o<<" - "<<other->name<<": "<<r.affinity
+         <<(r.affinity>=20?" (товарищи)":r.affinity<=-20?" (конфликт)":" (нейтрально)")<<"\n";
+        ++count;
+    }
+    if(!count)o<<"Связи ещё не сформированы.\n";
+    return o.str();
+}
+std::string Game::developmentText(int playerId)const{
+    const Player* p=findPlayer(playerId);
+    if(!p)return "Выберите футболиста.";
+    std::ostringstream o;
+    o<<"РАЗВИТИЕ ИГРОКА\n";
+    o<<"Потенциал: "<<p->potential<<"/100 | Опыт тренировки: "<<p->developmentXP
+     <<" | Улучшений навыков: "<<p->developedSkills<<"\n";
+    if(p->academyGraduate)o<<"Выпускник академии клуба\n";
+    if(p->mentorId>=0)if(const Player* mentor=findPlayer(p->mentorId))
+        o<<"Наставник: "<<mentor->name<<" (#"<<mentor->id<<")\n";
+    o<<"Тренер: "<<staffQuality(p->club,0)<<"/100 | База: "<<clubs_[p->club].facilities<<"/10\n";
+    o<<"Развитие зависит от возраста, потенциала, формы, тренера и наставничества.\n";
+    return o.str();
+}
 void Game::createFixtures(){
     matches_.clear();int id=0;
     for(const auto& l:leagues_){
