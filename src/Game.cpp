@@ -940,6 +940,7 @@ void Game::createCups(const std::vector<int>& continentalEntrants){
     // Six domestic six-club cups: four clubs contest the preliminary round,
     // while the two seeds enter directly at the semifinal stage.
     for(const auto& league:leagues_){
+        if(league.tier!=0)continue;
         std::vector<int> entries=leagueClubs(league.id);
         std::sort(entries.begin(),entries.end(),[this](int a,int b){
             return std::tie(clubs_[a].prestige,clubs_[a].budget)>
@@ -958,6 +959,7 @@ void Game::createCups(const std::vector<int>& continentalEntrants){
     std::vector<int> qualified=continentalEntrants;
     if(qualified.empty()){
         for(const auto& league:leagues_){
+            if(league.tier!=0)continue;
             std::vector<int> entries=leagueClubs(league.id);
             std::sort(entries.begin(),entries.end(),[this](int a,int b){
                 return clubs_[a].prestige>clubs_[b].prestige;
@@ -1141,6 +1143,13 @@ std::string Game::seasonHistoryText()const{
                <<": "<<clubs_[it->winner].name<<"\n";
         }
     }
+    if(!movements_.empty()){
+        out<<"\nПОВЫШЕНИЯ И ВЫЛЕТЫ\n";
+        for(auto it=movements_.rbegin();it!=movements_.rend();++it)
+            out<<it->season<<" • "<<leagues_[it->systemId].country
+               <<" | ↑ "<<clubs_[it->promotedClub].name
+               <<" | ↓ "<<clubs_[it->relegatedClub].name<<"\n";
+    }
     if(leagueHistory_.empty()&&trophies_.empty())
         out<<"История будет пополняться после финалов и окончания сезонов.\n";
     return out.str();
@@ -1192,7 +1201,10 @@ std::string Game::standings(int leagueId)const{
     for(size_t i=0;i<table.size();++i){const Club& c=*table[i];
         o<<std::setw(3)<<i+1<<"  "<<pad(c.name,29)<<" "<<std::setw(2)<<c.wins+c.draws+c.losses
         <<" "<<std::setw(2)<<c.wins<<" "<<std::setw(2)<<c.draws<<" "<<std::setw(2)<<c.losses<<"  "
-        <<c.gf<<":"<<c.ga<<"    "<<c.points<<(c.id==teamId_?"   < ВАШ КЛУБ":"")<<"\n";
+        <<c.gf<<":"<<c.ga<<"    "<<c.points
+         <<(i==0&&leagues_[leagueId].tier==1?"  ↑ ПОВЫШЕНИЕ":
+            (i+1==table.size()&&leagues_[leagueId].tier==0?"  ↓ ВЫЛЕТ":""))
+         <<(c.id==teamId_?"   < ВАШ КЛУБ":"")<<"\n";
     }
     return o.str();
 }
@@ -1217,7 +1229,8 @@ std::string Game::homeText()const{
     std::ostringstream o;
     o<<"ФУТБОЛЬНАЯ ВСЕЛЕННАЯ  /  "<<dateString()<<"\n\n";
     o<<"КЛУБ: "<<myClub().name<<"\n";
-    o<<"Менеджер: "<<manager_<<"\n";
+    o<<"Менеджер: "<<manager_<<" | репутация "<<reputation_<<"/100\n";
+    o<<"Дивизион: "<<leagues_[myClub().league].name<<" ("<<leagues_[myClub().league].country<<")\n";
     o<<"Роль: "<<(role_==Role::Coach?"Главный тренер":role_==Role::Director?"Спортивный директор":role_==Role::Owner?"Владелец":role_==Role::President?"Президент":"Песочница")<<"\n";
     o<<"Сложность: "<<(difficulty_==Difficulty::Easy?"Лёгкая":difficulty_==Difficulty::Realistic?"Реализм":difficulty_==Difficulty::Hard?"Сложная":"Свободная песочница")<<"\n\n";
     o<<"Бюджет: "<<money(myClub().budget)<<"\n";
@@ -1298,7 +1311,7 @@ std::string Game::newsText()const{
     return o.str();
 }
 std::string Game::helpText()const{
-    return "FOOTBALL UNIVERSE 0.8 / ПРОТОТИП\n\n"
+    return "FOOTBALL UNIVERSE 0.9 / ПРОТОТИП\n\n"
     "Это самостоятельная C++-игра с текстовым и 2D-отображением матча.\n"
     "Календарь и кубки: вкладка «Архив» показывает матчи, сетку кубков и историю чемпионов.\n"
     "В шести странах: национальные кубки из 6 клубов, один международный кубок из 8.\n"
@@ -1366,6 +1379,8 @@ std::string Game::teamTalk(int tone){
     return status_;
 }
 void Game::dailyTick(){
+    processCoachMarket();
+    processJobApplication();
     processLoanReturns();
     pruneRelationships();
     processTransferNegotiations();
@@ -1487,7 +1502,7 @@ void Game::newSeason(){
     // Qualification: six league winners + two strongest runners-up.
     std::vector<int> continental;
     std::vector<int> runnersUp;
-    for(const auto& record:leagueHistory_)if(record.season==old){
+    for(const auto& record:leagueHistory_)if(record.season==old&&record.leagueId<6){
         continental.push_back(record.winner);
         runnersUp.push_back(record.runnerUp);
     }
@@ -1497,6 +1512,7 @@ void Game::newSeason(){
                std::tuple(y.points,y.gf-y.ga,y.prestige);
     });
     for(int club:runnersUp)if(continental.size()<8)continental.push_back(club);
+    processPromotionRelegation(old);
     season_++;day_=0;
     for(auto& c:clubs_){c.wins=c.draws=c.losses=c.gf=c.ga=c.points=0;c.budget+=c.sponsorship*4;}
     for(auto& p:players_){
@@ -1656,6 +1672,8 @@ void Game::finishMatch(LiveMatch& live){
     processDeferredPayments();
     if(m.home==teamId_||m.away==teamId_){
         int diff=m.home==teamId_?live.goalsH-live.goalsA:live.goalsA-live.goalsH;
+        reputation_=clamp(reputation_+(diff>0?1:diff<0?-1:0),5,98);
+        coaches_[teamId_].ability=reputation_;
         myClub().fans=clamp(myClub().fans+(diff>0?2:diff<0?-2:0));
         myClub().board=clamp(myClub().board+(diff>0?1:diff<0?-1:0));
         addMessage("Результат матча",h.name+" "+std::to_string(live.goalsH)+":"+std::to_string(live.goalsA)+" "+a.name+
