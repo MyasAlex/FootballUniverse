@@ -50,7 +50,7 @@ std::vector<int> visibleIds;
 std::vector<int> activeNavigation;
 int lastListIndex=0;
 std::wstring detailText;
-const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Помощь"};
+const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Карьера тренера"};
 const int NAV_START=100, ACTION_START=300, LIST_ID=501, SETUP_START=600, SETUP_LOAD=601, SETUP_CLUB=602, SETUP_LEAGUES=603;
 std::string saveFile="career.fus";
 
@@ -144,7 +144,7 @@ void arrange(){
         move(subtitleText,left,65,bodyWidth-100,22);
         move(clubLogoWindow,right-85,12,82,82);
         for(int i=0;i<16;++i)move(nav[i],15,75+i*37,187,34);
-        bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14;
+        bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15;
         bool pitchNeeded=(page==4&&showPitch);
         int contentY=102,contentH=std::max(300,h-284);
         if(listNeeded){
@@ -185,6 +185,7 @@ std::vector<std::wstring> buttonTexts(int p){
         case 12:return {L"Обновить",L"Обзор",L"—",L"—",L"—"};
         case 13:return {L"Календарь",L"Кубки",L"Победители",L"Бомбардиры",L"Матч"};
         case 14:return {L"Вкл./выкл. лигу",L"Новая карьера",L"Сохранить",L"Загрузить",L"Импорт CSV"};
+        case 15:return {L"Подать заявку",L"Принять оффер",L"Отозвать",L"Рынок тренеров",L"Справка"};
         default:return {L"Обзор",L"—",L"—",L"—",L"—"};
     }
 }
@@ -286,6 +287,7 @@ void detailForSelected(){
     int id=selectedId();
     if(id<0){
         if(page==11)textContent(game().academyText());
+        else if(page==15)textContent(game().jobMarketText());
         else textContent("Выберите пункт из списка.");
         return;
     }
@@ -311,6 +313,7 @@ void detailForSelected(){
     else if(page==8)textContent(playerDetails(id)+"\n"+game().relationshipsText(id));
     else if(page==11)textContent(game().academyText());
     else if(page==5)textContent(game().standings(id));
+    else if(page==15)textContent(game().jobMarketText(id));
     else if(page==12){const auto& inbox=game().inbox();if(id>=0&&id<int(inbox.size()))textContent(inbox[id].title+"\n\n"+inbox[id].body);}
     else if(page==14){const auto& l=game().leagues();if(id>=0&&id<int(l.size()))textContent(game().standings(id)+"\n\nНажмите «Вкл./выкл. лигу», чтобы переключить детализацию.\nКлубная лига всегда активна.");}
 }
@@ -350,6 +353,14 @@ void populate(){
         for(const auto& l:game().leagues()){
             addList(wide(l.country+" • "+l.name+(l.active?" [АКТИВНА]":" [ФОН]")),l.id);
         }
+    }else if(page==15){
+        for(const auto& c:game().clubs()){
+            const auto& coach=game().coaches()[c.id];
+            const std::string tag=c.id==game().teamId()?"[ВАШ КЛУБ] ":
+                                   coach.vacant?"[ВАКАНСИЯ] ":"";
+            addList(wide(tag+c.name+" | "+
+                   game().leagues()[c.league].name),c.id);
+        }
     }else if(page==12){
         const auto& inbox=game().inbox();
         for(int j=int(inbox.size())-1;j>=0;--j)addList(wide(inbox[j].title),j);
@@ -365,7 +376,7 @@ void showPage(int next){
     lastListIndex=0;
     // Owner-draw nav does not automatically repaint when a different page is selected.
     for(auto& button:nav)if(button)InvalidateRect(button,nullptr,TRUE);
-    bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==12||page==14;
+    bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==12||page==14||page==15;
     show(listControl,listNeeded);show(inputControl,page==1||page==6||page==7||page==8||page==9||page==11||page==3||(page==4&&game().hasLiveMatch()));
     show(pitchWindow,page==4&&showPitch);
     for(int i=0;i<16;++i)show(nav[i],true);
@@ -409,7 +420,7 @@ void showPage(int next){
             else if(historyView==2)textContent(game().seasonHistoryText());
             else textContent(game().scorersText());
             break;
-        case 15:textContent(game().helpText());break;
+        case 15:detailForSelected();break;
     }
     tell(game().status());arrange();InvalidateRect(pitchWindow,nullptr,TRUE);InvalidateRect(clubLogoWindow,nullptr,TRUE);
 }
@@ -604,7 +615,13 @@ void trigger(int action){
         if(action==2)response=game().save(saveFile);
         if(action==3)response=game().load(saveFile);
         if(action==4)response=game().importPlayers("data/players.csv")?"CSV загружен":"Не удалось загрузить data/players.csv";
-    }else if(page==15){if(action==0){go(0);return;}}
+    }else if(page==15){
+        if(action==0)response=game().applyForJob(id);
+        if(action==1)response=game().acceptJobOffer();
+        if(action==2)response=game().withdrawApplication();
+        if(action==3)response=game().jobMarketText(id);
+        if(action==4)response=game().helpText();
+    }
     int old=lastListIndex;
     showPage(page);
     if(!visibleIds.empty()&&old<int(visibleIds.size())){
