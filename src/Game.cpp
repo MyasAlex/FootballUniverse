@@ -609,109 +609,91 @@ std::string Game::developmentText(int playerId)const{
     o<<"Развитие зависит от возраста, потенциала, формы, тренера и наставничества.\n";
     return o.str();
 }
-void Game::createFixtures(){
-    matches_.clear();int id=0;
-    for(const auto& l:leagues_){
-       auto clubs=leagueClubs(l.id);
-       if(clubs.size()%2)clubs.push_back(-1);
-       const int n=int(clubs.size());
-       std::vector<std::pair<int,int>> round;
-       int roundNum=0;
-       for(int rep=0;rep<3;++rep){
-           std::vector<int> rotation=clubs;
-           for(int leg=0;leg<2;++leg){
-               for(int r=0;r<n-1;++r){
-                   for(int k=0;k<n/2;++k){
-                       int a=rotation[k],b=rotation[n-1-k];if(a<0||b<0)continue;
-                       if((r+leg)%2)std::swap(a,b);
-                       Match m;m.id=id++;m.season=season_;m.day=3+10*roundNum;m.home=a;m.away=b;
-                       matches_.push_back(m);
-                   }
-                   int last=rotation.back();
-                   for(int j=n-1;j>1;--j)rotation[j]=rotation[j-1];
-                   rotation[1]=last;
-                   ++roundNum;
-               }
-               std::reverse(rotation.begin()+1,rotation.end());
-           }
-       }
+void Game::addFixturesForLeague(int leagueId){
+    auto clubs=leagueClubs(leagueId);
+    if(clubs.size()<2)return;
+    if(clubs.size()%2)clubs.push_back(-1);
+    const int n=int(clubs.size());
+    int roundNum=0;
+    for(int rep=0;rep<3;++rep){
+        std::vector<int> rotation=clubs;
+        for(int leg=0;leg<2;++leg){
+            for(int round=0;round<n-1;++round){
+                for(int k=0;k<n/2;++k){
+                    int home=rotation[k],away=rotation[n-1-k];
+                    if(home<0||away<0)continue;
+                    if((round+leg)%2)std::swap(home,away);
+                    Match m;m.id=int(matches_.size());
+                    m.season=season_;m.day=3+10*roundNum;
+                    m.home=home;m.away=away;
+                    matches_.push_back(std::move(m));
+                }
+                const int last=rotation.back();
+                for(int j=n-1;j>1;--j)rotation[j]=rotation[j-1];
+                rotation[1]=last;
+                ++roundNum;
+            }
+            std::reverse(rotation.begin()+1,rotation.end());
+        }
     }
-    std::stable_sort(matches_.begin(),matches_.end(),[](const Match&a,const Match&b){return std::tie(a.day,a.id)<std::tie(b.day,b.id);});
+}
+void Game::createFixtures(){
+    matches_.clear();
+    for(const auto& l:leagues_)addFixturesForLeague(l.id);
+    std::stable_sort(matches_.begin(),matches_.end(),[](const Match&a,const Match&b){
+        return std::tie(a.day,a.id)<std::tie(b.day,b.id);
+    });
     for(size_t i=0;i<matches_.size();++i)matches_[i].id=int(i);
 }
-void Game::newCareer(std::string manager,int clubId,Role role,Difficulty difficulty,const std::vector<int>& activeLeagues){
-    rng_.seed(std::random_device{}());season_=2026;day_=0;totalDays_=0;manager_=std::move(manager);role_=role;difficulty_=difficulty;
-    seedWorld();
-    if(clubId<0||clubId>=int(clubs_.size()))clubId=0;
-    teamId_=clubId;
-    for(auto& l:leagues_)l.active=std::find(activeLeagues.begin(),activeLeagues.end(),l.id)!=activeLeagues.end();
-    leagues_[clubs_[teamId_].league].active=true;
-    createSquads();
-    seedStaff();
-    generateYouth(teamId_,4+myClub().academy/3);
-    autoAssignCaptains();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();createCups();
-    addMessage("Добро пожаловать в клуб","Сезон 2026/27 начался. Режим карьеры: собственная футбольная вселенная. База клубов демонстрационная, составы процедурные. Активные лиги симулируются подробно.");
-    addMessage("Первые задачи","Изучите состав, настройте тактику, поговорите с футболистами и подготовьтесь к первому туру. Следующий день — на главной странице.");
-    status_="Новая карьера создана";
-}
-const Club& Game::myClub()const{return clubs_.at(teamId_);} Club& Game::myClub(){return clubs_.at(teamId_);}
-const Player* Game::findPlayer(int id)const{for(const auto& p:players_)if(p.id==id)return &p;return nullptr;}
-const Club* Game::findClub(int id)const{return id>=0&&id<int(clubs_.size())?&clubs_[id]:nullptr;}
-std::vector<int> Game::ownPlayers() const {std::vector<int> r;for(const auto& p:players_)if(p.club==teamId_)r.push_back(p.id);return r;}
-const ScoutReport* Game::scoutReport(int playerId)const{
-    for(const auto& r:scouts_)if(r.playerId==playerId)return &r;
-    return nullptr;
-}
-std::string Game::scoutText(int playerId)const{
-    const Player* p=findPlayer(playerId);
-    if(!p)return "Футболист не найден.";
-    const ScoutReport* r=scoutReport(playerId);
-    if(!r)return "Скаут не назначен. Нажмите «Скаутировать».";
-    std::ostringstream o;
-    o<<"СКАУТСКИЙ ОТЧЁТ: "<<p->name<<"\n";
-    o<<"Короткий список: "<<(r->shortlisted?"ДА":"нет")<<"\n";
-    if(r->days<5)o<<"Наблюдение: "<<r->days<<"/5 дней. Ожидается доклад специалиста.\n";
-    else o<<"Наблюдение завершено.\nОценка скаута: "<<r->ability
-          <<"/100\nОценка потенциала: "<<r->potential<<"/100\n";
-    o<<"Стоимость: "<<money(p->value)<<"\n";
-    return o.str();
-}
-std::string Game::scoutPlayer(int playerId){
-    if(!permissionSports())return status_="Нет полномочий отправлять скаутов.";
-    if(hasLiveMatch())return status_="Сначала завершите матч.";
-    const Player* p=findPlayer(playerId);
-    if(!p||p->club==teamId_)return status_="Выберите футболиста другого клуба.";
-    for(auto& r:scouts_)if(r.playerId==playerId){
-        if(r.days>=5)return status_="Отчёт по "+p->name+" уже готов.";
-        return status_="Скаут уже наблюдает за "+p->name+".";
-    }
-    scouts_.push_back({playerId,0,0,0,false});
-    return status_="Скаут отправлен изучать "+p->name+". Отчёт появится через 5 игровых дней.";
-}
-std::string Game::toggleShortlist(int playerId){
-    if(!permissionSports())return status_="Нет полномочий на работу с трансферным списком.";
-    const Player* p=findPlayer(playerId);
-    if(!p||p->club==teamId_)return status_="Выберите футболиста другого клуба.";
-    for(auto& r:scouts_)if(r.playerId==playerId){
-        r.shortlisted=!r.shortlisted;
-        return status_=p->name+(r.shortlisted?" добавлен в короткий список.":" удалён из короткого списка.");
-    }
-    scouts_.push_back({playerId,0,0,0,true});
-    return status_=p->name+" добавлен в короткий список (наблюдение началось).";
-}
-std::vector<int> Game::transferCandidates(bool shortlistOnly) const {
-    std::vector<int> r;
-    for(const auto& p:players_)if(p.club!=teamId_&&leagues_[clubs_[p.club].league].active&&(!shortlistOnly||(scoutReport(p.id)&&scoutReport(p.id)->shortlisted)))r.push_back(p.id);
-    std::sort(r.begin(),r.end(),[this](int a,int b){
-        bool sa=scoutReport(a)&&scoutReport(a)->shortlisted;
-        bool sb=scoutReport(b)&&scoutReport(b)->shortlisted;
-        if(sa!=sb)return sa;
-        return findPlayer(a)->value>findPlayer(b)->value;
+std::vector<int> Game::rankedClubs(int leagueId)const{
+    auto ids=leagueClubs(leagueId);
+    std::sort(ids.begin(),ids.end(),[this](int a,int b){
+        const Club& x=clubs_[a],&y=clubs_[b];
+        return std::tuple(x.points,x.gf-x.ga,x.gf,x.wins,x.prestige)>
+               std::tuple(y.points,y.gf-y.ga,y.gf,y.wins,y.prestige);
     });
-    if(r.size()>100)r.resize(100);
-    return r;
+    return ids;
 }
-
+void Game::processPromotionRelegation(int oldSeason){
+    for(int system=0;system<6;++system){
+        const auto top=rankedClubs(system),bottom=rankedClubs(system+6);
+        if(top.size()!=6||bottom.size()!=6)continue;
+        const int relegated=top.back(),promoted=bottom.front();
+        clubs_[relegated].league=system+6;
+        clubs_[promoted].league=system;
+        clubs_[promoted].prestige=clamp(clubs_[promoted].prestige+4);
+        clubs_[relegated].prestige=clamp(clubs_[relegated].prestige-3);
+        clubs_[promoted].budget+=2000000;
+        clubs_[relegated].budget-=1000000;
+        movements_.push_back({oldSeason,system,promoted,relegated});
+        addMessage("Повышение и вылет",
+            leagues_[system].country+": "+clubs_[promoted].name+
+            " выходит в "+leagues_[system].name+
+            ", "+clubs_[relegated].name+" вылетает в "+
+            leagues_[system+6].name+".");
+        if(teamId_==relegated||teamId_==promoted)
+            leagues_[clubs_[teamId_].league].active=true;
+    }
+}
+std::string Game::divisionsText()const{
+    std::ostringstream out;
+    out<<"НАЦИОНАЛЬНЫЕ СИСТЕМЫ ЛИГ\n";
+    out<<"6 стран • два уровня • 6 клубов в дивизионе\n";
+    out<<"Последняя команда высшей лиги вылетает; чемпион второго уровня поднимается.\n\n";
+    for(int sys=0;sys<6&&sys+6<int(leagues_.size());++sys){
+        out<<leagues_[sys].country<<": "<<leagues_[sys].name
+           <<" / "<<leagues_[sys+6].name<<"\n";
+        if(!movements_.empty()){
+            for(auto it=movements_.rbegin();it!=movements_.rend();++it){
+                if(it->systemId!=sys)continue;
+                out<<"  "<<it->season<<" ↑ "<<clubs_[it->promotedClub].name
+                   <<"  ↓ "<<clubs_[it->relegatedClub].name<<"\n";
+                break;
+            }
+        }
+    }
+    return out.str();
+}
 void Game::addCupMatch(int competition,int round,int day,int home,int away){
     if(home<0||away<0||home==away)throw std::runtime_error("Invalid cup pairing");
     Match m;
