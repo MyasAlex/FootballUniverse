@@ -2380,12 +2380,12 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_9\n";
+    f<<"FUSAVE_10\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
     f<<leagues_.size()<<'\n';
-    for(const auto& l:leagues_){f<<l.id<<' '<<l.active<<'\n';putString(f,l.country);putString(f,l.name);}
+    for(const auto& l:leagues_){f<<l.id<<' '<<l.active<<' '<<l.tier<<' '<<l.systemId<<'\n';putString(f,l.country);putString(f,l.name);}
     f<<clubs_.size()<<'\n';
     for(const auto& c:clubs_){
         f<<c.id<<' '<<c.league<<' '<<c.budget<<' '<<c.fans<<' '<<c.board<<' '<<c.prestige<<' '<<c.stadium<<' '<<c.academy<<' '<<c.facilities<<' '
@@ -2466,19 +2466,32 @@ std::string Game::save(const std::string& path)const{
     f<<leagueHistory_.size()<<'\n';
     for(const auto& r:leagueHistory_)
         f<<r.season<<' '<<r.leagueId<<' '<<r.winner<<' '<<r.runnerUp<<' '<<r.points<<'\n';
+    f<<movements_.size()<<'\n';
+    for(const auto& m:movements_)
+        f<<m.season<<' '<<m.systemId<<' '<<m.promotedClub<<' '<<m.relegatedClub<<'\n';
+    f<<coaches_.size()<<'\n';
+    for(const auto& c:coaches_){
+        f<<c.clubId<<' '<<c.ability<<' '<<c.jobSecurity<<' '<<c.contractYear
+         <<' '<<c.hiredDay<<' '<<c.vacant<<'\n';
+        putString(f,c.name);
+    }
+    f<<reputation_<<' '<<job_.clubId<<' '<<job_.submittedDay
+     <<' '<<job_.responseDay<<' '<<job_.expiresDay
+     <<' '<<job_.stage<<' '<<job_.proposedSalary<<'\n';
     return f.good()?"Карьера сохранена: "+path:"Ошибка записи сохранения";
 }
 std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9");
-    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9");
-    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9");
-    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9");
-    const bool version9=(header=="FUSAVE_9");
+    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10");
+    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10");
+    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10");
+    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10");
+    const bool version9=(header=="FUSAVE_9"||header=="FUSAVE_10");
+    const bool version10=(header=="FUSAVE_10");
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
@@ -2489,8 +2502,19 @@ std::string Game::load(const std::string& path){
     std::istringstream randomState(state);if(!(randomState>>loaded.rng_))return "Ошибка генератора мира";
     auto size=[&](size_t limit)->size_t{size_t n=0;if(!(f>>n)||n>limit)throw std::runtime_error("Некорректное число записей");return n;};
     try{
-        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.cups_.clear();loaded.trophies_.clear();loaded.leagueHistory_.clear();loaded.inbox_.clear();loaded.scouts_.clear();loaded.deals_.clear();loaded.payments_.clear();loaded.staff_.clear();loaded.youth_.clear();loaded.relations_.clear();
-        for(size_t i=0,n=size(300);i<n;++i){League l;if(!(f>>l.id>>l.active)||!getString(f,l.country)||!getString(f,l.name))throw std::runtime_error("Лиги");loaded.leagues_.push_back(l);}
+        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.cups_.clear();loaded.trophies_.clear();loaded.leagueHistory_.clear();loaded.movements_.clear();loaded.coaches_.clear();loaded.job_={};loaded.reputation_=55;loaded.inbox_.clear();loaded.scouts_.clear();loaded.deals_.clear();loaded.payments_.clear();loaded.staff_.clear();loaded.youth_.clear();loaded.relations_.clear();
+        for(size_t i=0,n=size(300);i<n;++i){
+            League l;
+            if(!(f>>l.id>>l.active))throw std::runtime_error("Лиги");
+            if(version10){
+                if(!(f>>l.tier>>l.systemId)||l.tier<0||l.tier>1||
+                   l.systemId<0||l.systemId>5)
+                    throw std::runtime_error("Иерархия лиг");
+            }else{l.tier=0;l.systemId=l.id;}
+            if(!getString(f,l.country)||!getString(f,l.name))
+                throw std::runtime_error("Названия лиг");
+            loaded.leagues_.push_back(l);
+        }
         for(size_t i=0,n=size(100000);i<n;++i){
             Club c;if(!(f>>c.id>>c.league>>c.budget>>c.fans>>c.board>>c.prestige>>c.stadium>>c.academy>>c.facilities
                 >>c.ticket>>c.sponsorship>>c.wins>>c.draws>>c.losses>>c.gf>>c.ga>>c.points>>c.formation>>c.tactic>>c.training))
