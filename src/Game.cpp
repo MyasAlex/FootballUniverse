@@ -519,7 +519,9 @@ std::string Game::teamTalk(int tone){
     return status_;
 }
 void Game::dailyTick(){
+    processLoanReturns();
     processTransferNegotiations();
+    processDeferredPayments();
     for(auto& report:scouts_)if(report.days<5){
         ++report.days;
         if(report.days==5){
@@ -579,7 +581,11 @@ void Game::dailyTick(){
         }
     }
     if(totalDays_>0&&totalDays_%30==0){
-       int wages=0;for(const auto& p:players_)if(p.club==teamId_)wages+=p.wage*4;
+       int wages=0;
+       for(const auto& p:players_){
+           if(p.club==teamId_)wages+=p.wage*4*(p.parentClub>=0?p.loanWageShare:100)/100;
+           else if(p.parentClub==teamId_)wages+=p.wage*4*(100-p.loanWageShare)/100;
+       }
        c.budget-=wages;
        addMessage("Финансовый отчёт","Ежемесячная выплата зарплат: "+money(wages)+". Остаток бюджета: "+money(c.budget)+".");
        if(c.budget<0){c.board=clamp(c.board-5);c.fans=clamp(c.fans-2);addMessage("Дефицит бюджета","Руководство обеспокоено долгами клуба. Необходимо восстановить финансовую устойчивость.");}
@@ -627,6 +633,7 @@ void Game::newSeason(){
         if(int(d.stage)>4)continue;
         if(!findPlayer(d.playerId))d.stage=DealStage::Cancelled;
     }
+    processLoanReturns();
     for(const auto& m:matches_)if(m.played)archive_.push_back(m);
     autoAssignCaptains();
     for(const auto& c:clubs_)pickLineup(c.id);
@@ -724,11 +731,12 @@ void Game::finishMatch(LiveMatch& live){
     for(auto& p:players_){
         bool wasHome=playedHome.contains(p.id),wasAway=playedAway.contains(p.id);
         if(!wasHome&&!wasAway)continue;
-        ++p.appearances;
+        ++p.appearances;++p.careerAppearances;
         p.fitness=clamp(p.fitness-random(5,11));
         int diff=wasHome?live.goalsH-live.goalsA:live.goalsA-live.goalsH;
         p.morale=clamp(p.morale+std::clamp(diff,-2,2));
     }
+    processDeferredPayments();
     if(m.home==teamId_||m.away==teamId_){
         int diff=m.home==teamId_?live.goalsH-live.goalsA:live.goalsA-live.goalsH;
         myClub().fans=clamp(myClub().fans+(diff>0?2:diff<0?-2:0));
@@ -880,7 +888,17 @@ std::string Game::negotiationText(int playerId)const{
     const int stage=int(deal->stage);
     o<<"ПЕРЕГОВОРЫ: "<<(stage>=0&&stage<9?stages[stage]:"неизвестно")<<"\n";
     if(const Club* seller=findClub(deal->sellerClub))o<<"Продавец: "<<seller->name<<"\n";
+    o<<"Тип сделки: "<<(deal->kind==1?"аренда":"покупка")<<"\n";
     o<<"Ваше предложение: "<<money(deal->fee)<<"\n";
+    if(deal->kind==1){
+        o<<"Срок аренды: "<<deal->loanDays<<" дней\n";
+        o<<"Доля зарплаты принимающей стороны: "<<deal->loanWageShare<<"%\n";
+    }else{
+        o<<"Рассрочка: "<<deal->installments<<" платежей\n";
+        if(deal->appearanceBonus)o<<"Бонус после 10 матчей: "<<money(deal->appearanceBonus)<<"\n";
+        if(deal->sellOnPct)o<<"Процент от последующей продажи: "<<deal->sellOnPct<<"%\n";
+        if(deal->exchangePlayerId>=0)o<<"Футболист в обмене: #"<<deal->exchangePlayerId<<"\n";
+    }
     if(deal->askingFee>0)o<<"Требование клуба: "<<money(deal->askingFee)<<"\n";
     if(deal->stage==DealStage::ClubReview||deal->stage==DealStage::AgentReview)
         o<<"Ответ ожидается через "<<std::max(0,deal->replyDay-totalDays_)<<" дн.\n";
@@ -893,9 +911,15 @@ std::string Game::negotiationText(int playerId)const{
             o<<"Интерес конкурента: "<<rival->name<<"\n";
     }
     if(stage<=4)o<<"Срок переговоров: "<<std::max(0,deal->expiryDay-totalDays_)<<" дн.\n";
-    if(deal->stage==DealStage::ClubCounter)o<<"Введите новую сумму или нажмите «Принять условия».\n";
+    if(deal->stage==DealStage::ClubCounter)
+        o<<"Введите новое предложение или нажмите «Принять условия».\n";
     if(deal->stage==DealStage::AgentOffer||deal->stage==DealStage::AgentCounter)
-        o<<"Введите недельную зарплату и срок: 55000 4\nИли нажмите «Принять условия».\n";
+        o<<(deal->kind==1?"Согласуйте с игроком временный переход (кнопка «Принять условия»).\n":
+             "Введите недельную зарплату и срок: 55000 4\nИли нажмите «Принять условия».\n");
+    o<<"Форматы: 15000000 (обычная покупка), deal 15000000 3 1000000 20\n";
+    o<<"(сумма, платежи, бонус за 10 матчей, % перепродажи);\n";
+    o<<"swap 5000000 123 (сумма и ID игрока в обмен); loan 100000 50 180\n";
+    o<<"(арендная плата, % зарплаты, дней).\n";
     return o.str();
 }
 std::string Game::transferBid(int playerId,int offered){
@@ -1010,8 +1034,12 @@ std::string Game::proposePlayerContract(int playerId,int weeklyWage,int years){
         return status_="Сначала согласуйте трансферную стоимость с клубом.";
     if(weeklyWage<500||weeklyWage>20000000||years<1||years>7)
         return status_="Зарплата от 500 до 20 млн € в неделю, контракт от 1 до 7 лет.";
-    if(!canFinance(d->fee+std::min(weeklyWage*2,40000000)))
-        return status_="Недостаточно бюджета на трансфер и подъёмные.";
+    if(d->kind==1&&weeklyWage!=d->askingWage)
+        return status_="При аренде действующая зарплата игрока не изменяется. Примите условия клуба.";
+    const int upfront=d->kind==1?d->fee:d->fee/d->installments+(d->fee%d->installments);
+    const int bonus=d->kind==1?0:std::min(weeklyWage*2,40000000);
+    if(!canFinance(upfront+bonus))
+        return status_="Недостаточно бюджета на первый платёж и подъёмные.";
     d->wage=weeklyWage;d->years=years;
     d->stage=DealStage::AgentReview;d->replyDay=totalDays_+1;
     ++d->rounds;
@@ -1020,9 +1048,13 @@ std::string Game::proposePlayerContract(int playerId,int weeklyWage,int years){
 std::string Game::acceptNegotiationTerms(int playerId){
     const auto* d=transferDeal(playerId);
     if(!d)return status_="Переговоры ещё не начинались.";
-    if(d->stage==DealStage::ClubCounter)return transferBid(playerId,d->askingFee);
+    if(d->stage==DealStage::ClubCounter){
+        if(d->kind==1)return offerLoan(playerId,d->askingFee,d->loanWageShare,d->loanDays);
+        return offerStructuredTransfer(playerId,d->askingFee,d->installments,
+                                       d->appearanceBonus,d->sellOnPct,d->exchangePlayerId);
+    }
     if(d->stage==DealStage::AgentOffer||d->stage==DealStage::AgentCounter)
-        return proposePlayerContract(playerId,d->askingWage,3);
+        return proposePlayerContract(playerId,d->askingWage,d->kind==1?1:3);
     return status_="Сейчас нет встречных условий, которые можно принять.";
 }
 std::string Game::cancelNegotiation(int playerId){
@@ -1206,7 +1238,7 @@ void Game::processTransferNegotiations(){
     for(auto& d:deals_){
         if(int(d.stage)>4)continue;
         const Player* p=findPlayer(d.playerId);
-        if(!p||p->club!=d.sellerClub){
+        if(!p||p->club!=d.sellerClub||p->parentClub>=0){
             d.stage=DealStage::Rejected;continue;
         }
         if(totalDays_>d.expiryDay){
@@ -1228,15 +1260,16 @@ void Game::processTransferNegotiations(){
                 d.stage=DealStage::AgentOffer;
                 const int prestigeGap=clubs_[d.sellerClub].prestige-myClub().prestige;
                 const int premium=std::max(0,prestigeGap)/2;
-                d.askingWage=int(std::min<int64_t>(20000000LL,
+                d.askingWage=d.kind==1?p->wage:int(std::min<int64_t>(20000000LL,
                    std::max<int64_t>(500,int64_t(p->wage)*(125+premium)/100)));
-                addMessage("Клуб принял предложение",clubs_[d.sellerClub].name+" согласен продать "+
+                addMessage("Клуб принял предложение",clubs_[d.sellerClub].name+
+                           (d.kind==1?" согласен отдать в аренду ":" согласен продать ")+
                            p->name+" за "+money(d.fee)+". Агент просит "+money(d.askingWage)+
                            " в неделю. Откройте «Трансферы».");
             }else if(d.fee<int64_t(d.askingFee)*60/100||d.rounds>=4){
                 d.stage=DealStage::Rejected;
                 addMessage("Предложение отклонено",clubs_[d.sellerClub].name+
-                           " отказался продавать "+p->name+" за "+money(d.fee)+".");
+                           " отклонил условия по "+p->name+" на сумму "+money(d.fee)+".");
             }else{
                 d.stage=DealStage::ClubCounter;
                 addMessage("Встречное предложение",clubs_[d.sellerClub].name+" хочет "+
@@ -1259,7 +1292,7 @@ void Game::processTransferNegotiations(){
 std::string Game::renewContract(int playerId,int wage,int years){
     if(!permissionSports()){status_="Нет полномочий на продление контракта.";return status_;}
     Player* p=nullptr;for(auto& i:players_)if(i.id==playerId)p=&i;
-    if(!p||p->club!=teamId_){status_="Выберите игрока своего клуба.";return status_;}
+    if(!p||p->club!=teamId_||p->parentClub>=0){status_="Выберите футболиста с постоянным контрактом клуба.";return status_;}
     if(wage<500||years<1||years>7){status_="Допустимо: зарплата от 500 € в неделю, срок 1–7 лет.";return status_;}
     int expected=p->wage*(p->morale<40?150:110)/100;
     int probability=clamp(45+(wage-expected)/std::max(100,p->wage/25)+p->trust/5,10,95);
