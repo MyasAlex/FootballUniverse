@@ -625,6 +625,248 @@ std::vector<int> Game::transferCandidates(bool shortlistOnly) const {
     if(r.size()>100)r.resize(100);
     return r;
 }
+
+void Game::addCupMatch(int competition,int round,int day,int home,int away){
+    if(home<0||away<0||home==away)throw std::runtime_error("Invalid cup pairing");
+    Match m;
+    m.id=int(matches_.size());
+    m.season=season_;
+    m.day=day;
+    m.home=home;
+    m.away=away;
+    m.competition=competition;
+    m.round=round;
+    matches_.push_back(std::move(m));
+}
+void Game::createCups(const std::vector<int>& continentalEntrants){
+    cups_.clear();
+    // Six domestic six-club cups: four clubs contest the preliminary round,
+    // while the two seeds enter directly at the semifinal stage.
+    for(const auto& league:leagues_){
+        std::vector<int> entries=leagueClubs(league.id);
+        std::sort(entries.begin(),entries.end(),[this](int a,int b){
+            return std::tie(clubs_[a].prestige,clubs_[a].budget)>
+                   std::tie(clubs_[b].prestige,clubs_[b].budget);
+        });
+        if(entries.size()!=6)continue;
+        CupCompetition cup;
+        cup.id=int(cups_.size());cup.season=season_;cup.leagueId=league.id;
+        cup.name="Кубок: "+league.country;
+        cup.byeA=entries[0];cup.byeB=entries[1];
+        cups_.push_back(cup);
+        addCupMatch(cup.id,0,21,entries[2],entries[5]);
+        addCupMatch(cup.id,0,21,entries[3],entries[4]);
+    }
+
+    std::vector<int> qualified=continentalEntrants;
+    if(qualified.empty()){
+        for(const auto& league:leagues_){
+            std::vector<int> entries=leagueClubs(league.id);
+            std::sort(entries.begin(),entries.end(),[this](int a,int b){
+                return clubs_[a].prestige>clubs_[b].prestige;
+            });
+            if(!entries.empty())qualified.push_back(entries[0]);
+        }
+        std::vector<int> wildcards;
+        for(const auto& club:clubs_)
+            if(std::find(qualified.begin(),qualified.end(),club.id)==qualified.end())
+                wildcards.push_back(club.id);
+        std::sort(wildcards.begin(),wildcards.end(),[this](int a,int b){
+            return clubs_[a].prestige>clubs_[b].prestige;
+        });
+        for(int id:wildcards)if(qualified.size()<8)qualified.push_back(id);
+    }
+    // Deduplicate qualifiers and fill two additional places if necessary.
+    std::vector<int> unique;
+    for(int id:qualified)
+        if(id>=0&&id<int(clubs_.size())&&
+           std::find(unique.begin(),unique.end(),id)==unique.end())
+            unique.push_back(id);
+    for(const auto& club:clubs_)if(unique.size()<8&&
+        std::find(unique.begin(),unique.end(),club.id)==unique.end())unique.push_back(club.id);
+    if(unique.size()>8)unique.resize(8);
+    if(unique.size()==8){
+        CupCompetition cup;
+        cup.id=int(cups_.size());cup.season=season_;cup.leagueId=-1;
+        cup.name="Международный кубок клубов";
+        cups_.push_back(cup);
+        // Top qualifiers and remaining participants are paired in reverse order.
+        for(int i=0;i<4;++i)addCupMatch(cup.id,0,51,unique[i],unique[7-i]);
+    }
+}
+int Game::knockoutWinner(const Match& m)const{
+    if(!m.played||m.competition<0)return -1;
+    if(m.homeGoals>m.awayGoals)return m.home;
+    if(m.homeGoals<m.awayGoals)return m.away;
+    if(m.penaltiesH>m.penaltiesA&&m.penaltiesH>=0)return m.home;
+    if(m.penaltiesA>m.penaltiesH&&m.penaltiesA>=0)return m.away;
+    return -1;
+}
+std::string Game::matchLabel(const Match& m)const{
+    if(m.competition<0)return "Чемпионат: "+leagues_[clubs_[m.home].league].name;
+    if(m.competition>=int(cups_.size()))return "Кубковый матч";
+    const char* stage=m.round==0?(cups_[m.competition].leagueId<0?"1/4 финала":"Предварительный раунд"):
+                      m.round==1?"1/2 финала":"Финал";
+    return cups_[m.competition].name+" / "+stage;
+}
+void Game::progressCups(){
+    for(auto& cup:cups_){
+        if(cup.champion>=0)continue;
+        std::vector<int> winners;
+        int gameCount=0;
+        bool ready=true;
+        int finalLoser=-1;
+        for(const auto& match:matches_)if(match.competition==cup.id&&match.round==cup.round){
+            ++gameCount;
+            if(!match.played){ready=false;break;}
+            int winner=knockoutWinner(match);
+            if(winner<0){ready=false;break;}
+            winners.push_back(winner);
+            if(cup.round==2)finalLoser=winner==match.home?match.away:match.home;
+        }
+        if(!ready||!gameCount)continue;
+        if(cup.round==0){
+            if(cup.leagueId>=0){
+                if(winners.size()!=2)continue;
+                const int winner1=winners[0],winner2=winners[1];
+                cup.round=1;
+                addCupMatch(cup.id,1,111,cup.byeA,winner2);
+                addCupMatch(cup.id,1,111,cup.byeB,winner1);
+            }else{
+                if(winners.size()!=4)continue;
+                cup.round=1;
+                addCupMatch(cup.id,1,151,winners[0],winners[3]);
+                addCupMatch(cup.id,1,151,winners[1],winners[2]);
+            }
+        }else if(cup.round==1){
+            if(winners.size()!=2)continue;
+            cup.round=2;
+            addCupMatch(cup.id,2,cup.leagueId>=0?201:261,winners[0],winners[1]);
+        }else if(cup.round==2&&winners.size()==1){
+            cup.champion=winners[0];
+            trophies_.push_back({season_,cup.id,winners[0],finalLoser});
+            const int prize=cup.leagueId<0?2500000:650000;
+            clubs_[winners[0]].budget+=prize;
+            addMessage("Победитель турнира",clubs_[winners[0]].name+" выиграл "+cup.name+
+                       " ("+std::to_string(season_)+"/"+std::to_string((season_+1)%100)+").");
+        }
+    }
+}
+void Game::archiveLeagueChampions(){
+    for(const auto& league:leagues_){
+        auto teams=leagueClubs(league.id);
+        if(teams.size()<2)continue;
+        std::sort(teams.begin(),teams.end(),[this](int a,int b){
+            const Club& first=clubs_[a];const Club& second=clubs_[b];
+            return std::tie(first.points,first.gf-first.ga,first.gf)>
+                   std::tie(second.points,second.gf-second.ga,second.gf);
+        });
+        leagueHistory_.push_back({season_,league.id,teams[0],teams[1],clubs_[teams[0]].points});
+    }
+}
+std::string Game::cupsText()const{
+    std::ostringstream out;
+    out<<"КУБКОВЫЕ СОРЕВНОВАНИЯ • "<<season_<<"/"<<(season_+1)%100<<"\n\n";
+    for(const auto& cup:cups_){
+        out<<cup.name;
+        if(cup.champion>=0)out<<" • ПОБЕДИТЕЛЬ: "<<clubs_[cup.champion].name;
+        out<<"\n";
+        if(cup.leagueId>=0)
+            out<<"Сетка на 6 команд: 2 предварительных игры, 2 полуфинала, финал.\n";
+        else out<<"Международный турнир: 8 приглашённых клубов, 1/4, 1/2 и финал.\n";
+        std::vector<const Match*> fixtures;
+        for(const auto& m:matches_)if(m.competition==cup.id)fixtures.push_back(&m);
+        std::sort(fixtures.begin(),fixtures.end(),[](auto a,auto b){
+            return std::tie(a->round,a->day,a->id)<std::tie(b->round,b->day,b->id);
+        });
+        for(const auto* m:fixtures){
+            out<<"  День "<<m->day<<" | "
+               <<(m->round==0?(cup.leagueId<0?"1/4":"Отбор"):m->round==1?"1/2":"Финал")
+               <<" | "<<clubs_[m->home].name<<" — "<<clubs_[m->away].name;
+            if(m->played){
+                out<<" "<<m->homeGoals<<":"<<m->awayGoals;
+                if(m->penaltiesH>=0)out<<" (пен. "<<m->penaltiesH<<":"<<m->penaltiesA<<")";
+            }else out<<" [ОЖИДАНИЕ]";
+            out<<"\n";
+        }
+        if(cup.leagueId>=0&&cup.round==0)
+            out<<"  Прямой выход в полуфинал: "<<clubs_[cup.byeA].name
+               <<" и "<<clubs_[cup.byeB].name<<"\n";
+        out<<"\n";
+    }
+    if(cups_.empty())out<<"Турниры появятся в начале следующего сезона.\n";
+    return out.str();
+}
+std::string Game::calendarText()const{
+    std::ostringstream out;
+    out<<"КАЛЕНДАРЬ КЛУБА • "<<clubs_[teamId_].name<<"\n\n";
+    std::vector<const Match*> fixtures;
+    for(const auto& match:matches_)
+        if(match.home==teamId_||match.away==teamId_)fixtures.push_back(&match);
+    std::sort(fixtures.begin(),fixtures.end(),[](const auto*a,const auto*b){
+        return std::tie(a->day,a->id)<std::tie(b->day,b->id);
+    });
+    int upcoming=0,recent=0;
+    out<<"СЛЕДУЮЩИЕ МАТЧИ\n";
+    for(const auto* m:fixtures)if(!m->played&&upcoming++<18){
+        out<<"День "<<m->day<<" • "<<matchLabel(*m)<<"\n  "
+           <<clubs_[m->home].name<<" — "<<clubs_[m->away].name<<"\n";
+    }
+    if(!upcoming)out<<"Нет предстоящих игр.\n";
+    out<<"\nПОСЛЕДНИЕ РЕЗУЛЬТАТЫ\n";
+    for(auto it=fixtures.rbegin();it!=fixtures.rend()&&recent<10;++it){
+        const auto* m=*it;
+        if(!m->played)continue;
+        ++recent;
+        out<<"День "<<m->day<<" • "<<matchLabel(*m)<<"\n  "
+           <<clubs_[m->home].name<<" "<<m->homeGoals<<":"<<m->awayGoals<<" "
+           <<clubs_[m->away].name;
+        if(m->penaltiesH>=0)out<<" [пен. "<<m->penaltiesH<<":"<<m->penaltiesA<<"]";
+        out<<"\n";
+    }
+    return out.str();
+}
+std::string Game::seasonHistoryText()const{
+    std::ostringstream out;
+    out<<"ИСТОРИЯ ПОБЕДИТЕЛЕЙ\n\n";
+    if(!leagueHistory_.empty()){
+        out<<"ЧЕМПИОНЫ НАЦИОНАЛЬНЫХ ЛИГ\n";
+        for(auto it=leagueHistory_.rbegin();it!=leagueHistory_.rend();++it)
+            out<<it->season<<"/"<<(it->season+1)%100<<" • "
+               <<leagues_[it->leagueId].country<<": "<<clubs_[it->winner].name
+               <<" ("<<it->points<<" очков)\n";
+    }
+    if(!trophies_.empty()){
+        out<<"\nКУБКОВЫЕ ПОБЕДИТЕЛИ\n";
+        for(auto it=trophies_.rbegin();it!=trophies_.rend();++it){
+            const auto* match=std::find_if(archive_.begin(),archive_.end(),
+                [&](const Match& m){return m.season==it->season&&m.competition==it->cupId;});
+            (void)match;
+            out<<it->season<<"/"<<(it->season+1)%100<<" • "
+               <<(it->cupId==6?"Международный кубок":("Кубок: "+leagues_[it->cupId].country))
+               <<": "<<clubs_[it->winner].name<<"\n";
+        }
+    }
+    if(leagueHistory_.empty()&&trophies_.empty())
+        out<<"История будет пополняться после финалов и окончания сезонов.\n";
+    return out.str();
+}
+std::string Game::scorersText()const{
+    std::vector<const Player*> players;
+    for(const auto& player:players_)players.push_back(&player);
+    std::sort(players.begin(),players.end(),[](const Player*a,const Player*b){
+        return std::tie(a->goals,a->appearances)>std::tie(b->goals,b->appearances);
+    });
+    std::ostringstream out;
+    out<<"БОМБАРДИРЫ СЕЗОНА "<<season_<<"/"<<(season_+1)%100<<"\n";
+    out<<"Учитываются голы во всех соревнованиях текущего сезона.\n\n";
+    for(size_t i=0;i<std::min<size_t>(20,players.size());++i){
+        const Player& p=*players[i];
+        out<<i+1<<". "<<p.name<<" | "<<clubs_[p.club].name
+           <<" | "<<p.goals<<" голов / "<<p.appearances<<" матчей\n";
+    }
+    return out.str();
+}
 std::string Game::dateString()const{
     using namespace std::chrono;
     auto date=sys_days(year{season_}/7/1)+days{day_};
