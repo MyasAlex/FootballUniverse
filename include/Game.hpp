@@ -13,7 +13,7 @@ struct Player {
     std::array<int,10> skill{}; // pace, finishing, passing, defending, technique, strength, vision, stamina, decisions, goalkeeping
     int morale=65, fitness=90, trust=50, loyalty=50, family=65;
     int wage=1000, value=500000, contractYear=2028, injured=0;
-    int goals=0, appearances=0, yellow=0, red=0;
+    int goals=0, appearances=0, yellow=0, red=0, assists=0, suspension=0;
     bool starter=false; // chosen in matchday starting XI
     int trainingFocus=-1; // -1 = team training; 0..9 = individual skill
     int releaseClause=0, sellOnClub=-1, sellOnPct=0;
@@ -28,11 +28,17 @@ struct Club {
     int budget=12000000, fans=65, board=65, prestige=60, stadium=20000, academy=2, facilities=2;
     int ticket=25, sponsorship=250000, wins=0, draws=0, losses=0, gf=0, ga=0, points=0;
     int formation=0, tactic=1, training=1;
+    int pressing=1, tempo=1, width=1; // 0 low, 1 balanced, 2 high
     int captainId=-1, viceCaptainId=-1;
 };
 // systemId identifies one country pyramid; tier: 0 top, 1 second division.
 struct League { int id=0; std::string country, name; bool active=true; int tier=0, systemId=0; };
 struct Event { int minute=0; std::string text; };
+struct MatchPlayerStat {
+    int playerId=0, minutes=0, shots=0, onTarget=0, passes=0, completedPasses=0;
+    int tackles=0, saves=0, goals=0, assists=0, yellows=0, reds=0;
+    int rating10=60; // 3.5..10.0 after match, 6.0 before
+};
 struct Match {
     int id=0, season=2026, day=0, home=0, away=0, homeGoals=0, awayGoals=0;
     bool played=false;
@@ -40,6 +46,10 @@ struct Match {
     std::vector<Event> events;
     int competition=-1, round=0; // -1 league, 0..5 national cup, 6 continental invitation
     int penaltiesH=-1, penaltiesA=-1; // only for drawn knockout matches
+    int possessionH=50, onTargetH=0, onTargetA=0;
+    int passesH=0, passesA=0, completedH=0, completedA=0;
+    int foulsH=0, foulsA=0, cornersH=0, cornersA=0;
+    std::vector<MatchPlayerStat> playerStats;
 };
 struct CupCompetition {
     int id=0, season=2026, leagueId=-1, round=0, champion=-1;
@@ -94,6 +104,10 @@ struct LiveMatch {
     int subsH=0, subsA=0;
     std::vector<int> homeXI, awayXI, usedHome, usedAway;
     std::vector<Event> events;
+    int possessionTicksH=0, onTargetH=0, onTargetA=0;
+    int passesH=0, passesA=0, completedH=0, completedA=0;
+    int foulsH=0, foulsA=0, cornersH=0, cornersA=0;
+    std::vector<MatchPlayerStat> playerStats;
 };
 
 enum class Role : int { Coach=0, Director=1, Owner=2, President=3, Sandbox=4 };
@@ -179,6 +193,11 @@ public:
     std::string financesText() const;
     std::string matchText() const;
     std::string matchArchive() const;
+    std::string matchReport(int matchId) const;
+    std::string latestMatchReport() const;
+    void changePressing();
+    void changeTempo();
+    void changeWidth();
     std::string newsText() const;
     std::string helpText() const;
     std::vector<int> ownPlayers() const;
@@ -274,6 +293,10 @@ private:
     void dailyTick();
     int rating(const Club& club) const;
     void playMinute(LiveMatch& match, bool detailed);
+    void finalizeRatings(LiveMatch& match);
+    void applyMatchDiscipline(const Match& match);
+    MatchPlayerStat* statFor(LiveMatch& match,int playerId);
+    const Match* lastPlayedMatchForClub() const;
     void finishMatch(LiveMatch& match);
     void simulateOtherMatches();
     void simulateFast(Match& match);
