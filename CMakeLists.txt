@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FootballUniverse VERSION 0.5.0 LANGUAGES CXX)
+project(FootballUniverse VERSION 0.6.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Link the MSVC runtime statically so players do not need Visual C++ installed.
@@ -47,3 +47,8 @@ add_executable(fu_transfer_tests tests/test_transfers.cpp)
 target_link_libraries(fu_transfer_tests PRIVATE fu_core)
 add_test(NAME multi_stage_transfer_negotiations COMMAND fu_transfer_tests)
 set_tests_properties(multi_stage_transfer_negotiations PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+add_executable(fu_advanced_transfers_tests tests/test_advanced_transfers.cpp)
+target_link_libraries(fu_advanced_transfers_tests PRIVATE fu_core)
+add_test(NAME advanced_transfers_loans_finances COMMAND fu_advanced_transfers_tests)
+set_tests_properties(advanced_transfers_loans_finances PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
