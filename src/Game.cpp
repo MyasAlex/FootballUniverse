@@ -694,6 +694,161 @@ std::string Game::divisionsText()const{
     }
     return out.str();
 }
+void Game::seedCoaches(){
+    coaches_.clear();
+    for(const auto& c:clubs_){
+        CoachRecord coach;
+        coach.clubId=c.id;
+        coach.ability=clamp(c.prestige+random(-15,12),25,95);
+        coach.jobSecurity=clamp(65+random(-10,15),25,99);
+        coach.hiredDay=totalDays_;
+        coach.contractYear=season_+random(1,4);
+        coach.name=c.id==teamId_?manager_:
+            firstNames[random(0,int(firstNames.size()-1))]+" "+
+            lastNames[random(0,int(lastNames.size()-1))];
+        if(c.id==teamId_)coach.ability=reputation_;
+        coaches_.push_back(std::move(coach));
+    }
+    job_={};
+}
+void Game::processCoachMarket(){
+    for(auto& coach:coaches_){
+        if(coach.clubId==teamId_)continue;
+        const Club& club=clubs_[coach.clubId];
+        if(coach.vacant){
+            if(totalDays_-coach.hiredDay>=12){
+                coach.vacant=false;
+                coach.name=firstNames[random(0,int(firstNames.size()-1))]+" "+
+                           lastNames[random(0,int(lastNames.size()-1))];
+                coach.ability=clamp(club.prestige+random(-18,15),20,96);
+                coach.contractYear=season_+random(1,3);
+                coach.jobSecurity=65;
+                coach.hiredDay=totalDays_;
+                if(random(1,4)==1)addMessage("Новый тренер",club.name+" нанял "+coach.name+".");
+            }
+            continue;
+        }
+        const int matches=club.wins+club.draws+club.losses;
+        if(matches>=10&&totalDays_%28==0){
+            const int performance=(club.points*100)/(std::max(1,matches)*3);
+            const int expected=clamp(club.prestige/2,20,55);
+            coach.jobSecurity=clamp(coach.jobSecurity+(performance>=expected?5:-12),0,99);
+            if(coach.jobSecurity<24){
+                coach.vacant=true;coach.hiredDay=totalDays_;coach.name="";
+                addMessage("Тренер уволен",club.name+" отправил главного тренера в отставку.");
+            }
+        }
+    }
+}
+std::string Game::jobMarketText(int clubId)const{
+    std::ostringstream out;
+    out<<"КАРЬЕРА ТРЕНЕРА • "<<manager_<<"\n";
+    out<<"Репутация: "<<reputation_<<"/100 | Текущий клуб: "<<myClub().name<<"\n";
+    out<<"Вакансии отмечены словом «СВОБОДНО». Можно откликаться и на занятые места.\n";
+    out<<"Ответ руководства приходит через 2 игровых дня, предложение действует до 10-го дня.\n\n";
+    if(job_.stage>=0){
+        const std::string club=(job_.clubId>=0&&job_.clubId<int(clubs_.size()))?
+                               clubs_[job_.clubId].name:"неизвестный клуб";
+        static const std::array<const char*,5> statuses={
+            "Рассматривается","Контракт предложен","Отказ",
+            "Принято","Закрыто"
+        };
+        out<<"ПОСЛЕДНЯЯ ЗАЯВКА\n"<<club<<" • "
+           <<(job_.stage<=4?statuses[job_.stage]:"неизвестно")<<"\n";
+        if(job_.stage==0)out<<"Осталось "<<std::max(0,job_.responseDay-totalDays_)<<" дн.\n";
+        if(job_.stage==1)out<<"Зарплата: "<<money(job_.proposedSalary)
+                             <<"/нед. • предложение до дня "<<job_.expiresDay<<"\n";
+        out<<"\n";
+    }
+    if(clubId>=0&&clubId<int(clubs_.size())){
+        const Club& c=clubs_[clubId];
+        const CoachRecord& coach=coaches_[clubId];
+        out<<"КЛУБ: "<<c.name<<"\n";
+        out<<"Страна: "<<leagues_[c.league].country<<"\n";
+        out<<"Дивизион: "<<leagues_[c.league].name<<"\n";
+        out<<"Престиж: "<<c.prestige<<" | бюджет: "<<money(c.budget)<<"\n";
+        out<<"Тренер: "<<(clubId==teamId_?"ВЫ":coach.vacant?"СВОБОДНО":coach.name)<<"\n";
+        out<<"Стабильность штаба: "<<coach.jobSecurity<<"/100\n";
+        out<<"Выберите клуб слева и нажмите «Подать заявку».\n";
+    }else{
+        int vacant=0;
+        for(const auto& c:coaches_)if(c.vacant)++vacant;
+        out<<"Свободных мест: "<<vacant<<" из "<<coaches_.size()<<"\n";
+        out<<"Выберите клуб в списке для просмотра условий.\n";
+    }
+    if(role_!=Role::Coach&&role_!=Role::Sandbox)
+        out<<"\nДля смены работы используйте карьеру главного тренера или песочницу.\n";
+    return out.str();
+}
+std::string Game::applyForJob(int clubId){
+    if(role_!=Role::Coach&&role_!=Role::Sandbox)
+        return status_="Смена клуба доступна в роли главного тренера или в песочнице.";
+    if(hasLiveMatch())return status_="Сначала завершите матч.";
+    if(clubId<0||clubId>=int(clubs_.size())||clubId==teamId_)
+        return status_="Выберите другой клуб из списка.";
+    if(job_.stage==0||job_.stage==1)
+        return status_="Сначала получите ответ или закройте предыдущую заявку.";
+    job_.clubId=clubId;
+    job_.submittedDay=totalDays_;
+    job_.responseDay=totalDays_+2;
+    job_.expiresDay=totalDays_+10;
+    job_.stage=0;
+    job_.proposedSalary=5000+clubs_[clubId].prestige*900;
+    return status_="Заявка в "+clubs_[clubId].name+
+                   " отправлена. Решение руководства через 2 игровых дня.";
+}
+void Game::processJobApplication(){
+    if(job_.stage==0&&totalDays_>=job_.responseDay){
+        const int cid=job_.clubId;
+        if(cid<0||cid>=int(clubs_.size())){job_.stage=4;return;}
+        const CoachRecord& coach=coaches_[cid];
+        const int required=clubs_[cid].prestige-(coach.vacant?20:0);
+        const bool success=difficulty_==Difficulty::Free||
+                           reputation_+random(-8,14)>=required;
+        job_.stage=success?1:2;
+        if(success){
+            addMessage("Предложение о работе",clubs_[cid].name+
+                       " готов пригласить вас. Зарплата "+money(job_.proposedSalary)+
+                       "/нед. Согласие требуется до "+std::to_string(job_.expiresDay)+
+                       "-го игрового дня.");
+        }else{
+            addMessage("Отказ по заявке",clubs_[cid].name+
+                       " решил не менять тренера либо выбрал более опытного кандидата.");
+        }
+    }
+    if(job_.stage==1&&totalDays_>job_.expiresDay){
+        addMessage("Истекло предложение",clubs_[job_.clubId].name+
+                   " закрыл предложение после истечения срока.");
+        job_.stage=4;
+    }
+}
+std::string Game::acceptJobOffer(){
+    if(hasLiveMatch())return status_="Сначала завершите текущий матч.";
+    if(job_.stage!=1||job_.clubId<0||job_.clubId>=int(clubs_.size()))
+        return status_="Нет действующего предложения о работе.";
+    if(totalDays_>job_.expiresDay){job_.stage=4;return status_="Предложение уже истекло.";}
+    const int previous=teamId_,next=job_.clubId;
+    coaches_[previous].vacant=true;coaches_[previous].name="";
+    coaches_[previous].hiredDay=totalDays_;coaches_[previous].jobSecurity=20;
+    teamId_=next;
+    coaches_[next].vacant=false;
+    coaches_[next].name=manager_;coaches_[next].ability=reputation_;
+    coaches_[next].hiredDay=totalDays_;
+    coaches_[next].jobSecurity=70;
+    leagues_[myClub().league].active=true;
+    // Career continues at the same date, with the new club's fixtures and squad.
+    job_.stage=3;
+    lastYouthSearchDay_=totalDays_-30;
+    addMessage("Новая работа","Вы возглавили "+myClub().name+
+               ". Карьера, кубки и результаты других команд продолжаются.");
+    return status_="Новая работа: "+myClub().name+".";
+}
+std::string Game::withdrawApplication(){
+    if(job_.stage!=0&&job_.stage!=1)
+        return status_="Нет активной заявки для отзыва.";
+    job_.stage=4;
+    return status_="Заявка на тренерскую работу отозвана.";
+}
 void Game::newCareer(std::string manager,int clubId,Role role,Difficulty difficulty,const std::vector<int>& activeLeagues){
     rng_.seed(std::random_device{}());season_=2026;day_=0;totalDays_=0;manager_=std::move(manager);role_=role;difficulty_=difficulty;
     seedWorld();
@@ -703,6 +858,7 @@ void Game::newCareer(std::string manager,int clubId,Role role,Difficulty difficu
     leagues_[clubs_[teamId_].league].active=true;
     createSquads();
     seedStaff();
+    seedCoaches();
     generateYouth(teamId_,4+myClub().academy/3);
     autoAssignCaptains();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();createCups();
     addMessage("Добро пожаловать в клуб","Сезон 2026/27 начался. Режим карьеры: собственная футбольная вселенная. База клубов демонстрационная, составы процедурные. Активные лиги симулируются подробно.");
