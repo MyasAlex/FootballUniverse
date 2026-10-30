@@ -837,8 +837,10 @@ void Game::processJobApplication(){
         if(cid<0||cid>=int(clubs_.size())){job_.stage=4;return;}
         const CoachRecord& coach=coaches_[cid];
         const int required=clubs_[cid].prestige-(coach.vacant?20:0);
+        const int difficultyMargin=difficulty_==Difficulty::Easy?12:
+                                   difficulty_==Difficulty::Hard?-10:0;
         const bool success=difficulty_==Difficulty::Free||
-                           reputation_+random(-8,14)>=required;
+                           reputation_+difficultyMargin+random(-8,14)>=required;
         job_.stage=success?1:2;
         if(success){
             addMessage("Предложение о работе",clubs_[cid].name+
