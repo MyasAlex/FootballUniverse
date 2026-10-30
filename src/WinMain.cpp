@@ -289,7 +289,7 @@ void drawPitch(HDC dc,RECT area){
     rightAlign.SetAlignment(Gdiplus::StringAlignmentFar);
     g.DrawString(right.c_str(),-1,&title,rightRect,&rightAlign,&ink);
     g.DrawString(clock.c_str(),-1,&normal,Gdiplus::PointF(18.f,31.f),&hint);
-    const wchar_t* controls=L"▶ Авто / Пауза     +15 минут     2D / текст";
+    const wchar_t* controls=L"ЛКМ: ▶ / пауза   |   ПКМ: скорость   |   +15 мин: кнопка";
     g.DrawString(controls,-1,&normal,
         Gdiplus::PointF(17.f,float(h)-27.f),&hint);
     auto px=[&](float x){return pitch.X+cw*x/1000.f;};
@@ -381,6 +381,18 @@ void drawPitch(HDC dc,RECT area){
     screen.DrawImage(&back,0,0);
 }
 LRESULT CALLBACK pitchProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
+    if(msg==WM_LBUTTONDOWN){
+        SendMessageW(mainWindow,WM_COMMAND,MAKEWPARAM(ACTION_START+1,BN_CLICKED),
+                     LPARAM(actions[1]));
+        return 0;
+    }
+    if(msg==WM_RBUTTONDOWN){
+        matchSpeedIndex=(matchSpeedIndex+1)%3;
+        lastPlaybackTick=GetTickCount64();
+        const std::string label=matchSpeedIndex==0?"x1":matchSpeedIndex==1?"x2":"x4";
+        tell("Скорость матча "+label+".");
+        return 0;
+    }
     if(msg==WM_ERASEBKGND)return 1;
     if(msg==WM_PAINT){PAINTSTRUCT ps;HDC dc=BeginPaint(hwnd,&ps);RECT r;GetClientRect(hwnd,&r);drawPitch(dc,r);EndPaint(hwnd,&ps);return 0;}
     return DefWindowProcW(hwnd,msg,w,l);
@@ -525,6 +537,7 @@ void populate(){
 }
 void showPage(int next){
     if(!started)return;
+    if(next!=4)autoPlayMatch=false;
     page=std::clamp(next,0,15);
     lastListIndex=0;
     // Owner-draw nav does not automatically repaint when a different page is selected.
@@ -540,6 +553,11 @@ void showPage(int next){
     show(actions[5],page==1||page==2||page==6||page==8||page==10||page==11||(page==4&&game().hasLiveMatch()));
     SetWindowTextW(actions[5],page==1?L"Вице-капитан":page==6?L"Отменить сделку":page==8?L"Жёсткий разговор":page==11?L"Уволить":page==2?L"Матч":page==4?L"Заменить":L"Билет −5 €");
     if(page==6)SetWindowTextW(actions[3],shortlistOnly?L"Все игроки":L"Короткий список");
+    if(page==4){
+        SetWindowTextW(actions[0],game().hasLiveMatch()?L"+15 минут":L"Начать матч");
+        SetWindowTextW(actions[1],autoPlayMatch?L"⏸ Пауза":L"▶ Авто");
+        updatePitchFrame();
+    }
     SetWindowTextW(titleText,navLabels[page].c_str());
     std::wstring sub=wide(game().myClub().name)+L"   •   "+wide(game().dateString())+L"   •   Сезон "+std::to_wstring(game().season())+L"/"+std::to_wstring((game().season()+1)%100);
     SetWindowTextW(subtitleText,sub.c_str());
@@ -653,9 +671,25 @@ void trigger(int action){
             catch(...){response="Выберите молодого футболиста и введите ID наставника от 25 лет.";}
         }
     }else if(page==4){
-        if(action==0)game().startLiveMatch();
-        if(action==1)game().stepLiveMatch(15);
-        if(action==2)game().instantMatch();
+        if(action==0){
+            autoPlayMatch=false;
+            if(!game().hasLiveMatch())game().startLiveMatch();
+            else game().stepLiveMatch(15);
+        }
+        if(action==1){
+            if(!game().hasLiveMatch()&&!game().startLiveMatch())
+                response=game().status();
+            else{
+                autoPlayMatch=!autoPlayMatch;
+                lastPlaybackTick=GetTickCount64();
+                response=autoPlayMatch?"Автовоспроизведение запущено.":"Матч на паузе.";
+            }
+        }
+        if(action==2){
+            autoPlayMatch=false;
+            if(game().hasLiveMatch())game().stepLiveMatch(90);
+            else game().instantMatch();
+        }
         if(action==3)game().changeTactic();
         if(action==4)showPitch=!showPitch;
         if(action==5){
@@ -830,9 +864,33 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         setupStart=create(L"BUTTON",L"Создать карьеру",WS_CHILD|WS_VISIBLE|BS_OWNERDRAW|WS_TABSTOP,SETUP_START);
         setupLoad=create(L"BUTTON",L"Загрузить",WS_CHILD|WS_VISIBLE|BS_OWNERDRAW|WS_TABSTOP,SETUP_LOAD);
         SendMessageW(setupLeagues,WM_SETFONT,WPARAM(smallFont),TRUE);
+        SetTimer(hwnd,PITCH_TIMER,PITCH_TICK_MS,nullptr);
         trace("WM_CREATE before setup");showSetup();trace("WM_CREATE END");return 0;
     }
     case WM_SIZE:arrange();return 0;
+    case WM_TIMER:{
+        if(w!=PITCH_TIMER)return 0;
+        if(started&&page==4){
+            const ULONGLONG now=GetTickCount64();
+            if(autoPlayMatch&&now-lastPlaybackTick>=ULONGLONG(matchPlaybackDelay())){
+                lastPlaybackTick=now;
+                if(game().hasLiveMatch()){
+                    game().stepLiveMatch(1);
+                    if(!game().hasLiveMatch()){
+                        autoPlayMatch=false;
+                        showPage(4);
+                    }else{
+                        textContent(game().matchText());
+                        tell(game().status());
+                    }
+                }else autoPlayMatch=false;
+            }
+            updatePitchFrame();
+            if(showPitch&&pitchWindow)
+                InvalidateRect(pitchWindow,nullptr,FALSE);
+        }
+        return 0;
+    }
     case WM_COMMAND:{
         int id=LOWORD(w), code=HIWORD(w);
         if(id>=NAV_START&&id<NAV_START+16&&code==BN_CLICKED){showPage(id-NAV_START);return 0;}
@@ -863,7 +921,7 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         RECT sidebar={0,0,205,rect.bottom};HBRUSH brush=CreateSolidBrush(RGB(10,17,29));FillRect(HDC(w),&sidebar,brush);DeleteObject(brush);return 1;
     }
     case WM_CLOSE:DestroyWindow(hwnd);return 0;
-    case WM_DESTROY:PostQuitMessage(0);return 0;
+    case WM_DESTROY:KillTimer(hwnd,PITCH_TIMER);PostQuitMessage(0);return 0;
     }
     return DefWindowProcW(hwnd,msg,w,l);
 }
