@@ -694,6 +694,79 @@ std::string Game::divisionsText()const{
     }
     return out.str();
 }
+void Game::newCareer(std::string manager,int clubId,Role role,Difficulty difficulty,const std::vector<int>& activeLeagues){
+    rng_.seed(std::random_device{}());season_=2026;day_=0;totalDays_=0;manager_=std::move(manager);role_=role;difficulty_=difficulty;
+    seedWorld();
+    if(clubId<0||clubId>=int(clubs_.size()))clubId=0;
+    teamId_=clubId;
+    for(auto& l:leagues_)l.active=std::find(activeLeagues.begin(),activeLeagues.end(),l.id)!=activeLeagues.end();
+    leagues_[clubs_[teamId_].league].active=true;
+    createSquads();
+    seedStaff();
+    generateYouth(teamId_,4+myClub().academy/3);
+    autoAssignCaptains();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();createCups();
+    addMessage("Добро пожаловать в клуб","Сезон 2026/27 начался. Режим карьеры: собственная футбольная вселенная. База клубов демонстрационная, составы процедурные. Активные лиги симулируются подробно.");
+    addMessage("Первые задачи","Изучите состав, настройте тактику, поговорите с футболистами и подготовьтесь к первому туру. Следующий день — на главной странице.");
+    status_="Новая карьера создана";
+}
+const Club& Game::myClub()const{return clubs_.at(teamId_);} Club& Game::myClub(){return clubs_.at(teamId_);}
+const Player* Game::findPlayer(int id)const{for(const auto& p:players_)if(p.id==id)return &p;return nullptr;}
+const Club* Game::findClub(int id)const{return id>=0&&id<int(clubs_.size())?&clubs_[id]:nullptr;}
+std::vector<int> Game::ownPlayers() const {std::vector<int> r;for(const auto& p:players_)if(p.club==teamId_)r.push_back(p.id);return r;}
+const ScoutReport* Game::scoutReport(int playerId)const{
+    for(const auto& r:scouts_)if(r.playerId==playerId)return &r;
+    return nullptr;
+}
+std::string Game::scoutText(int playerId)const{
+    const Player* p=findPlayer(playerId);
+    if(!p)return "Футболист не найден.";
+    const ScoutReport* r=scoutReport(playerId);
+    if(!r)return "Скаут не назначен. Нажмите «Скаутировать».";
+    std::ostringstream o;
+    o<<"СКАУТСКИЙ ОТЧЁТ: "<<p->name<<"\n";
+    o<<"Короткий список: "<<(r->shortlisted?"ДА":"нет")<<"\n";
+    if(r->days<5)o<<"Наблюдение: "<<r->days<<"/5 дней. Ожидается доклад специалиста.\n";
+    else o<<"Наблюдение завершено.\nОценка скаута: "<<r->ability
+          <<"/100\nОценка потенциала: "<<r->potential<<"/100\n";
+    o<<"Стоимость: "<<money(p->value)<<"\n";
+    return o.str();
+}
+std::string Game::scoutPlayer(int playerId){
+    if(!permissionSports())return status_="Нет полномочий отправлять скаутов.";
+    if(hasLiveMatch())return status_="Сначала завершите матч.";
+    const Player* p=findPlayer(playerId);
+    if(!p||p->club==teamId_)return status_="Выберите футболиста другого клуба.";
+    for(auto& r:scouts_)if(r.playerId==playerId){
+        if(r.days>=5)return status_="Отчёт по "+p->name+" уже готов.";
+        return status_="Скаут уже наблюдает за "+p->name+".";
+    }
+    scouts_.push_back({playerId,0,0,0,false});
+    return status_="Скаут отправлен изучать "+p->name+". Отчёт появится через 5 игровых дней.";
+}
+std::string Game::toggleShortlist(int playerId){
+    if(!permissionSports())return status_="Нет полномочий на работу с трансферным списком.";
+    const Player* p=findPlayer(playerId);
+    if(!p||p->club==teamId_)return status_="Выберите футболиста другого клуба.";
+    for(auto& r:scouts_)if(r.playerId==playerId){
+        r.shortlisted=!r.shortlisted;
+        return status_=p->name+(r.shortlisted?" добавлен в короткий список.":" удалён из короткого списка.");
+    }
+    scouts_.push_back({playerId,0,0,0,true});
+    return status_=p->name+" добавлен в короткий список (наблюдение началось).";
+}
+std::vector<int> Game::transferCandidates(bool shortlistOnly) const {
+    std::vector<int> r;
+    for(const auto& p:players_)if(p.club!=teamId_&&leagues_[clubs_[p.club].league].active&&(!shortlistOnly||(scoutReport(p.id)&&scoutReport(p.id)->shortlisted)))r.push_back(p.id);
+    std::sort(r.begin(),r.end(),[this](int a,int b){
+        bool sa=scoutReport(a)&&scoutReport(a)->shortlisted;
+        bool sb=scoutReport(b)&&scoutReport(b)->shortlisted;
+        if(sa!=sb)return sa;
+        return findPlayer(a)->value>findPlayer(b)->value;
+    });
+    if(r.size()>100)r.resize(100);
+    return r;
+}
+
 void Game::addCupMatch(int competition,int round,int day,int home,int away){
     if(home<0||away<0||home==away)throw std::runtime_error("Invalid cup pairing");
     Match m;
