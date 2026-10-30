@@ -95,7 +95,7 @@ std::string playerDetails(int id){
 }
 void arrange(){
     if(!mainWindow)return;
-    RECT r{};GetClientRect(mainWindow,&r);int w=std::max(920,r.right),h=std::max(650,r.bottom);
+    RECT r{};GetClientRect(mainWindow,&r);int w=std::max(920,static_cast<int>(r.right)),h=std::max(650,static_cast<int>(r.bottom));
     int left=215,right=w-24,bodyWidth=right-left;
     if(!started){
         move(titleText,45,25,w-215,48);move(subtitleText,45,78,w-215,35);
