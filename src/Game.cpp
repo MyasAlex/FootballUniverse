@@ -400,8 +400,12 @@ std::string Game::squadText()const{
     o<<"Основа: "<<starters(teamId_).size()<<"/11\n";
     if(const Player* p=findPlayer(myClub().captainId))o<<"Капитан: "<<p->name<<"\n";
     if(const Player* p=findPlayer(myClub().viceCaptainId))o<<"Вице-капитан: "<<p->name<<"\n";
-    int injured=0,unhappy=0;for(const auto& p:players_)if(p.club==teamId_){injured+=p.injured>0;unhappy+=p.morale<45;}
-    o<<"Травмировано: "<<injured<<"\nНедовольны: "<<unhappy<<"\n";
+    int injured=0,unhappy=0,loanees=0;
+    for(const auto& p:players_)if(p.club==teamId_){
+        injured+=p.injured>0;unhappy+=p.morale<45;loanees+=p.parentClub>=0;
+    }
+    o<<"Травмировано: "<<injured<<"\nНедовольны: "<<unhappy
+     <<"\nАрендованные: "<<loanees<<"\n";
     return o.str();
 }
 std::string Game::homeText()const{
@@ -452,6 +456,20 @@ std::string Game::financesText()const{
     o<<"Академия: "<<c.academy<<"/10\n";
     o<<"Доходы зависят от посещаемости, результатов и\nотношений с болельщиками.\n\n";
     o<<"Улучшить стадион: 3 млн €\nУлучшить базу: 2 млн €\nУлучшить академию: 2.5 млн €\n";
+    o<<"\nОТЛОЖЕННЫЕ ТРАНСФЕРНЫЕ ПЛАТЕЖИ\n";
+    int count=0;
+    for(const auto& p:payments_){
+        if(p.buyerClub!=teamId_&&p.sellerClub!=teamId_)continue;
+        if(++count>18){o<<"... и другие обязательства\n";break;}
+        o<<(p.buyerClub==teamId_?"Расход":"Доход")<<" "<<money(p.amount)
+         <<" | игрок #"<<p.playerId<<" | ";
+        if(p.triggerAppearances>0){
+            const Player* player=findPlayer(p.playerId);
+            o<<"после "<<std::max(0,p.triggerAppearances-(player?player->careerAppearances:0))
+             <<" матчей\n";
+        }else o<<"через "<<std::max(0,p.dueDay-totalDays_)<<" дн.\n";
+    }
+    if(!count)o<<"Активных обязательств нет.\n";
     return o.str();
 }
 void Game::addMessage(std::string title,std::string body){
