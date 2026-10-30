@@ -639,6 +639,12 @@ void Game::newSeason(){
         if(!findPlayer(d.playerId))d.stage=DealStage::Cancelled;
     }
     processLoanReturns();
+    // Conditional bonuses must not refer to players who retired or changed club.
+    processDeferredPayments();
+    for(auto& d:deals_)if(int(d.stage)<=4){
+        const Player* p=findPlayer(d.playerId);
+        if(!p||p->club!=d.sellerClub||p->parentClub>=0)d.stage=DealStage::Cancelled;
+    }
     for(const auto& m:matches_)if(m.played)archive_.push_back(m);
     autoAssignCaptains();
     for(const auto& c:clubs_)pickLineup(c.id);
