@@ -23,6 +23,7 @@ struct Club {
     int budget=12000000, fans=65, board=65, prestige=60, stadium=20000, academy=2, facilities=2;
     int ticket=25, sponsorship=250000, wins=0, draws=0, losses=0, gf=0, ga=0, points=0;
     int formation=0, tactic=1, training=1;
+    int captainId=-1, viceCaptainId=-1;
 };
 struct League { int id=0; std::string country, name; bool active=true; };
 struct Event { int minute=0; std::string text; };
@@ -33,6 +34,7 @@ struct Match {
     std::vector<Event> events;
 };
 struct Message { int day=0; std::string title, body; };
+struct ScoutReport { int playerId=0, days=0, ability=0, potential=0; bool shortlisted=false; };
 struct LiveMatch {
     int id=-1, minute=0, goalsH=0, goalsA=0, shotsH=0, shotsA=0, xgH=0, xgA=0;
     int subsH=0, subsA=0;
@@ -53,6 +55,8 @@ public:
     const std::vector<Match>& matches() const { return matches_; }
     const std::vector<Match>& archive() const { return archive_; }
     const std::vector<Message>& inbox() const { return inbox_; }
+    const std::vector<ScoutReport>& scoutReports() const { return scouts_; }
+    const ScoutReport* scoutReport(int playerId) const;
     const Club& myClub() const;
     Club& myClub();
     const Player* findPlayer(int id) const;
@@ -82,7 +86,12 @@ public:
     std::string newsText() const;
     std::string helpText() const;
     std::vector<int> ownPlayers() const;
-    std::vector<int> transferCandidates() const;
+    std::vector<int> transferCandidates(bool shortlistOnly=false) const;
+    std::string scoutPlayer(int playerId);
+    std::string toggleShortlist(int playerId);
+    std::string scoutText(int playerId) const;
+    std::string setCaptain(int playerId, bool vice=false);
+    std::string teamTalk(int tone);
     std::vector<int> leagueClubs(int leagueId) const;
     const Match* upcomingMatch() const;
     const LiveMatch& live() const { return live_; }
@@ -116,6 +125,8 @@ private:
     std::vector<Match> matches_;
     std::vector<Match> archive_;
     std::vector<Message> inbox_;
+    std::vector<ScoutReport> scouts_;
+    int lastTeamTalkDay_=-30;
     std::string manager_="Manager", status_;
     int teamId_=0, day_=0, season_=2026, totalDays_=0, nextPlayerId_=1;
     Role role_=Role::Coach;
@@ -125,6 +136,7 @@ private:
     int random(int lo,int hi);
     void seedWorld();
     void createSquads();
+    void autoAssignCaptains();
     void createFixtures();
     void pickLineup(int clubId);
     void initializeLineups(LiveMatch& live, const Match& match) const;
