@@ -812,14 +812,16 @@ std::string Game::teamTalk(int tone){
 }
 void Game::dailyTick(){
     processLoanReturns();
+    pruneRelationships();
     processTransferNegotiations();
     processDeferredPayments();
     for(auto& report:scouts_)if(report.days<5){
         ++report.days;
         if(report.days==5){
             if(const Player* p=findPlayer(report.playerId)){
-                report.ability=clamp(playerRating(*p)+random(-6,6));
-                report.potential=clamp(p->potential+random(-8,8));
+                const int accuracy=std::max(2,13-staffQuality(teamId_,2)/10);
+                report.ability=clamp(playerRating(*p)+random(-accuracy,accuracy));
+                report.potential=clamp(p->potential+random(-accuracy-2,accuracy+2));
                 addMessage("Скаутский отчёт готов",p->name+": оценка "+std::to_string(report.ability)+
                            "/100, потенциал "+std::to_string(report.potential)+"/100. Откройте «Трансферы».");
             }
@@ -827,7 +829,13 @@ void Game::dailyTick(){
     }
     auto& c=myClub();
     for(auto& p:players_){
-        if(p.injured>0){--p.injured;p.fitness=clamp(p.fitness+2);continue;}
+        if(p.injured>0){
+            --p.injured;
+            if(p.club==teamId_&&staffQuality(teamId_,1)>=75&&totalDays_%3==0&&p.injured>0)
+                --p.injured;
+            p.fitness=clamp(p.fitness+2+std::min(3,staffQuality(p.club,1)/30));
+            continue;
+        }
         if(p.club!=teamId_){p.fitness=clamp(p.fitness+1);continue;}
         int training=c.training;
         if(training==0)p.fitness=clamp(p.fitness+5);
@@ -836,13 +844,33 @@ void Game::dailyTick(){
         if(training==3){p.fitness=clamp(p.fitness);if(random(0,20)==0)p.skill[4]=clamp(p.skill[4]+1);}
         if(training==4){p.fitness=clamp(p.fitness+1);if(random(0,21)==0)p.skill[8]=clamp(p.skill[8]+1);}
         if(p.trainingFocus>=0&&p.trainingFocus<10){
-            const int odds=(p.age<=23?11:p.age<=29?21:34);
-            if(p.skill[p.trainingFocus]<p.potential&&random(1,odds)==1){
+            const int coach=staffQuality(teamId_,0);
+            const bool hasMentor=p.mentorId>=0&&findPlayer(p.mentorId)&&
+                                 findPlayer(p.mentorId)->club==p.club;
+            int gained=1+myClub().facilities/3+coach/25+
+                       (p.morale>=65?1:0)+(p.academyGraduate?1:0)+(hasMentor?2:0);
+            if(p.age>30)gained=std::max(1,gained/3);
+            else if(p.age>25)gained=std::max(1,gained*2/3);
+            if(c.training==0)gained=std::max(1,gained/2);
+            else if(c.training==2)gained+=2;
+            p.developmentXP=std::min(10000,p.developmentXP+gained);
+            const int threshold=140+(p.age>25?(p.age-25)*14:0);
+            if(p.developmentXP>=threshold&&p.skill[p.trainingFocus]<p.potential){
                 p.skill[p.trainingFocus]=clamp(p.skill[p.trainingFocus]+1);
-                p.fitness=clamp(p.fitness-1);
+                p.developmentXP-=threshold;
+                ++p.developedSkills;
+                if(p.developedSkills%4==0)
+                    addMessage("Прогресс тренировки",p.name+" улучшил "+skillNames[p.trainingFocus]+
+                               " до "+std::to_string(p.skill[p.trainingFocus])+".");
             }
         }
-        if(training==2&&p.fitness<45&&random(0,300)==0){p.injured=random(4,16);p.starter=false;addMessage("Травма на тренировке",p.name+" выбыл на "+std::to_string(p.injured)+" дней.");pickLineup(teamId_);}
+        const int medical=staffQuality(teamId_,1);
+        if(training==2&&p.fitness<45&&random(0,300+medical*5)==0){
+            p.injured=std::max(2,random(4,16)-medical/25);
+            p.starter=false;
+            addMessage("Травма на тренировке",p.name+" выбыл на "+std::to_string(p.injured)+" дней.");
+            pickLineup(teamId_);
+        }
         if(random(0,160)==0) p.morale=clamp(p.morale+random(-3,3));
         if(p.family<30&&random(0,90)==0){p.morale=clamp(p.morale-3);p.trust=clamp(p.trust-2);}
     }
@@ -878,8 +906,12 @@ void Game::dailyTick(){
            if(p.club==teamId_)wages+=p.wage*4*(p.parentClub>=0?p.loanWageShare:100)/100;
            else if(p.parentClub==teamId_)wages+=p.wage*4*(100-p.loanWageShare)/100;
        }
-       c.budget-=wages;
-       addMessage("Финансовый отчёт","Ежемесячная выплата зарплат: "+money(wages)+". Остаток бюджета: "+money(c.budget)+".");
+       int staffWages=0;
+       for(const auto& person:staff_)if(person.club==teamId_)staffWages+=person.weeklyWage*4;
+       c.budget-=wages+staffWages;
+       addMessage("Финансовый отчёт","Зарплаты игроков: "+money(wages)+
+                  ", зарплаты штаба: "+money(staffWages)+
+                  ". Остаток бюджета: "+money(c.budget)+".");
        if(c.budget<0){c.board=clamp(c.board-5);c.fans=clamp(c.fans-2);addMessage("Дефицит бюджета","Руководство обеспокоено долгами клуба. Необходимо восстановить финансовую устойчивость.");}
     }
 }
@@ -931,6 +963,15 @@ void Game::newSeason(){
     for(auto& d:deals_)if(int(d.stage)<=4){
         const Player* p=findPlayer(d.playerId);
         if(!p||p->club!=d.sellerClub||p->parentClub>=0)d.stage=DealStage::Cancelled;
+    }
+    pruneRelationships();
+    youth_.erase(std::remove_if(youth_.begin(),youth_.end(),
+        [this](const YouthProspect& prospect){return prospect.club==teamId_;}),youth_.end());
+    generateYouth(teamId_,4+myClub().academy/3);
+    lastYouthSearchDay_=totalDays_-30;
+    for(auto& s:staff_)if(s.contractYear<=season_){
+        s.contractYear=season_+2;
+        s.weeklyWage=std::min(20000000,s.weeklyWage*104/100);
     }
     for(const auto& m:matches_)if(m.played)archive_.push_back(m);
     autoAssignCaptains();
