@@ -2680,7 +2680,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_10\n";
+    f<<"FUSAVE_11\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -2689,7 +2689,7 @@ std::string Game::save(const std::string& path)const{
     f<<clubs_.size()<<'\n';
     for(const auto& c:clubs_){
         f<<c.id<<' '<<c.league<<' '<<c.budget<<' '<<c.fans<<' '<<c.board<<' '<<c.prestige<<' '<<c.stadium<<' '<<c.academy<<' '<<c.facilities<<' '
-         <<c.ticket<<' '<<c.sponsorship<<' '<<c.wins<<' '<<c.draws<<' '<<c.losses<<' '<<c.gf<<' '<<c.ga<<' '<<c.points<<' '<<c.formation<<' '<<c.tactic<<' '<<c.training<<' '<<c.captainId<<' '<<c.viceCaptainId<<'\n';
+         <<c.ticket<<' '<<c.sponsorship<<' '<<c.wins<<' '<<c.draws<<' '<<c.losses<<' '<<c.gf<<' '<<c.ga<<' '<<c.points<<' '<<c.formation<<' '<<c.tactic<<' '<<c.training<<' '<<c.captainId<<' '<<c.viceCaptainId<<' '<<c.pressing<<' '<<c.tempo<<' '<<c.width<<'\n';
         putString(f,c.name);putString(f,c.city);
     }
     f<<players_.size()<<'\n';
@@ -2700,20 +2700,36 @@ std::string Game::save(const std::string& path)const{
         <<p.releaseClause<<' '<<p.sellOnClub<<' '<<p.sellOnPct<<' '
         <<p.parentClub<<' '<<p.loanReturnDay<<' '<<p.loanWageShare<<' '
         <<p.careerAppearances<<' '<<p.developmentXP<<' '<<p.mentorId
-        <<' '<<p.developedSkills<<' '<<p.academyGraduate<<'\n';
+        <<' '<<p.developedSkills<<' '<<p.academyGraduate<<' '<<p.assists<<' '<<p.suspension<<'\n';
         putString(f,p.name);putString(f,p.position);putString(f,p.personality);
     }
+    auto writeStats=[&](const std::vector<MatchPlayerStat>& stats){
+        f<<stats.size()<<'\n';
+        for(const auto& p:stats)
+            f<<p.playerId<<' '<<p.minutes<<' '<<p.shots<<' '<<p.onTarget<<' '
+             <<p.passes<<' '<<p.completedPasses<<' '<<p.tackles<<' '<<p.saves
+             <<' '<<p.goals<<' '<<p.assists<<' '<<p.yellows<<' '<<p.reds
+             <<' '<<p.rating10<<'\n';
+    };
     f<<matches_.size()<<'\n';
     for(const auto& m:matches_){
         f<<m.id<<' '<<m.season<<' '<<m.day<<' '<<m.home<<' '<<m.away<<' '<<m.homeGoals<<' '<<m.awayGoals<<' '<<m.played<<' '
-         <<m.shotsH<<' '<<m.shotsA<<' '<<m.xgH<<' '<<m.xgA<<' '<<m.events.size()<<' '<<m.competition<<' '<<m.round<<' '<<m.penaltiesH<<' '<<m.penaltiesA<<'\n';
+         <<m.shotsH<<' '<<m.shotsA<<' '<<m.xgH<<' '<<m.xgA<<' '<<m.events.size()<<' '<<m.competition<<' '<<m.round<<' '<<m.penaltiesH<<' '<<m.penaltiesA<<' '
+         <<m.possessionH<<' '<<m.onTargetH<<' '<<m.onTargetA<<' '
+         <<m.passesH<<' '<<m.passesA<<' '<<m.completedH<<' '<<m.completedA<<' '
+         <<m.foulsH<<' '<<m.foulsA<<' '<<m.cornersH<<' '<<m.cornersA<<'\n';
         for(const auto& e:m.events){f<<e.minute<<'\n';putString(f,e.text);}
+        writeStats(m.playerStats);
     }
     f<<archive_.size()<<'\n';
     for(const auto& m:archive_){
         f<<m.id<<' '<<m.season<<' '<<m.day<<' '<<m.home<<' '<<m.away<<' '<<m.homeGoals<<' '<<m.awayGoals<<' '<<m.played<<' '
-         <<m.shotsH<<' '<<m.shotsA<<' '<<m.xgH<<' '<<m.xgA<<' '<<m.events.size()<<' '<<m.competition<<' '<<m.round<<' '<<m.penaltiesH<<' '<<m.penaltiesA<<'\n';
+         <<m.shotsH<<' '<<m.shotsA<<' '<<m.xgH<<' '<<m.xgA<<' '<<m.events.size()<<' '<<m.competition<<' '<<m.round<<' '<<m.penaltiesH<<' '<<m.penaltiesA<<' '
+         <<m.possessionH<<' '<<m.onTargetH<<' '<<m.onTargetA<<' '
+         <<m.passesH<<' '<<m.passesA<<' '<<m.completedH<<' '<<m.completedA<<' '
+         <<m.foulsH<<' '<<m.foulsA<<' '<<m.cornersH<<' '<<m.cornersA<<'\n';
         for(const auto& e:m.events){f<<e.minute<<'\n';putString(f,e.text);}
+        writeStats(m.playerStats);
     }
     f<<inbox_.size()<<'\n';
     for(const auto& n:inbox_){f<<n.day<<'\n';putString(f,n.title);putString(f,n.body);}
@@ -2725,6 +2741,10 @@ std::string Game::save(const std::string& path)const{
     };
     writeIds(live_.homeXI);writeIds(live_.awayXI);
     writeIds(live_.usedHome);writeIds(live_.usedAway);
+    f<<live_.possessionTicksH<<' '<<live_.onTargetH<<' '<<live_.onTargetA<<' '
+     <<live_.passesH<<' '<<live_.passesA<<' '<<live_.completedH<<' '<<live_.completedA<<' '
+     <<live_.foulsH<<' '<<live_.foulsA<<' '<<live_.cornersH<<' '<<live_.cornersA<<'\n';
+    writeStats(live_.playerStats);
     f<<lastTeamTalkDay_<<' '<<scouts_.size()<<'\n';
     for(const auto& r:scouts_)f<<r.playerId<<' '<<r.days<<' '<<r.ability<<' '<<r.potential<<' '<<r.shortlisted<<'\n';
     f<<deals_.size()<<'\n';
