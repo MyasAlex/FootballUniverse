@@ -30,7 +30,11 @@ LONG WINAPI crashLog(EXCEPTION_POINTERS* info) {
     trace(msg);
     return EXCEPTION_CONTINUE_SEARCH;
 }
-fu::Game game;
+fu::Game& game() {
+    // Construct only after program startup; avoids cross-translation-unit init order issues.
+    static fu::Game instance;
+    return instance;
+}
 HINSTANCE appInstance{};
 HWND mainWindow{}, mainText{}, listControl{}, inputControl{}, titleText{}, subtitleText{}, statusText{}, pitchWindow{}, clubLogoWindow{};
 HWND nav[16]{}, actions[6]{};
@@ -93,14 +97,14 @@ int selectedId(){int pos=int(SendMessageW(listControl,LB_GETCURSEL,0,0));return 
 void textContent(const std::string& content){setText(mainText,content);SendMessageW(mainText,EM_SETSEL,0,0);SendMessageW(mainText,EM_SCROLLCARET,0,0);}
 void tell(const std::string& result){setText(statusText,result);}
 std::string playerDetails(int id){
-    const fu::Player* p=game.findPlayer(id);
+    const fu::Player* p=game().findPlayer(id);
     if(!p)return "Выберите игрока из списка.";
     std::ostringstream o;
     o<<"ID: "<<p->id<<" | "<<p->name<<" / "<<p->position<<" / "<<p->age<<" лет\n";
     o<<"Статус: "<<(p->starter?"ОСНОВА":"ЗАПАС")<<"\n";
     static const char* focusNames[]={"Скорость","Удар","Пас","Отбор","Техника","Сила","Видение поля","Выносливость","Решения","Вратарское мастерство"};
     o<<"Индивидуальный фокус: "<<(p->trainingFocus<0?"Командный план":focusNames[p->trainingFocus])<<"\n\n";
-    o<<"Клуб: "<<(game.findClub(p->club)?game.findClub(p->club)->name:std::string("—"))<<"\n";
+    o<<"Клуб: "<<(game().findClub(p->club)?game().findClub(p->club)->name:std::string("—"))<<"\n";
     static const char* names[]={"Скорость","Удар","Пас","Отбор","Техника","Сила","Видение поля","Выносливость","Решения","Игра в воротах"};
     for(int i=0;i<10;++i)o<<names[i]<<": "<<p->skill[i]<<"/100\n";
     o<<"\nПотенциал: "<<p->potential<<"/100\n";
@@ -187,11 +191,11 @@ void drawPitch(HDC dc,RECT area){
     SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);
     const int xs[11]={4,17,17,17,17,36,36,36,56,56,68};
     const int ys[11]={50,16,38,62,84,22,50,78,22,78,50};
-    int seed=game.hasLiveMatch()?game.live().minute:30;
+    int seed=game().hasLiveMatch()?game().live().minute:30;
     for(int team=0;team<2;++team){
         HBRUSH jersey=CreateSolidBrush(team?RGB(247,120,106):RGB(69,160,241));
         size_t count=11;
-        if(game.hasLiveMatch())count=team?game.live().awayXI.size():game.live().homeXI.size();
+        if(game().hasLiveMatch())count=team?game().live().awayXI.size():game().live().homeXI.size();
         for(size_t i=0;i<std::min<size_t>(11,count);++i){
             int x=team?(100-xs[i]):xs[i];
             int y=ys[i];
@@ -230,12 +234,12 @@ LRESULT CALLBACK logoProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         Gdiplus::SolidBrush bg(Gdiplus::Color(13,21,35));
         graphics.FillRectangle(&bg,0,0,r.right,r.bottom);
         int clubId=0;
-        if(started){ clubId=game.teamId(); }
+        if(started){ clubId=game().teamId(); }
         else if(setupClub){
             int index=int(SendMessageW(setupClub,CB_GETCURSEL,0,0));
-            if(index>=0&&index<int(game.clubs().size()))clubId=game.clubs()[index].id;
+            if(index>=0&&index<int(game().clubs().size()))clubId=game().clubs()[index].id;
         }
-        const fu::Club* club=game.findClub(clubId);
+        const fu::Club* club=game().findClub(clubId);
         wchar_t modulePath[MAX_PATH]{};
         GetModuleFileNameW(nullptr,modulePath,MAX_PATH);
         std::filesystem::path logoPath=std::filesystem::path(modulePath).parent_path()/L"assets"/L"clubs"/(std::to_wstring(clubId)+L".png");
@@ -271,22 +275,22 @@ void showPage(int next);
 void detailForSelected(){
     int id=selectedId();
     if(id<0){textContent("Выберите пункт из списка.");return;}
-    if(page==1)textContent(playerDetails(id)+"\n\n"+game.lineupText());
-    else if(page==3)textContent(game.tacticsText()+"\n"+playerDetails(id)+"\nНажмите «Фокус игрока» для переключения навыка.");
+    if(page==1)textContent(playerDetails(id)+"\n\n"+game().lineupText());
+    else if(page==3)textContent(game().tacticsText()+"\n"+playerDetails(id)+"\nНажмите «Фокус игрока» для переключения навыка.");
     else if(page==6||page==7||page==8)textContent(playerDetails(id));
-    else if(page==5)textContent(game.standings(id));
-    else if(page==12){const auto& inbox=game.inbox();if(id>=0&&id<int(inbox.size()))textContent(inbox[id].title+"\n\n"+inbox[id].body);}
-    else if(page==14){const auto& l=game.leagues();if(id>=0&&id<int(l.size()))textContent(game.standings(id)+"\n\nНажмите «Вкл./выкл. лигу», чтобы переключить детализацию.\nКлубная лига всегда активна.");}
+    else if(page==5)textContent(game().standings(id));
+    else if(page==12){const auto& inbox=game().inbox();if(id>=0&&id<int(inbox.size()))textContent(inbox[id].title+"\n\n"+inbox[id].body);}
+    else if(page==14){const auto& l=game().leagues();if(id>=0&&id<int(l.size()))textContent(game().standings(id)+"\n\nНажмите «Вкл./выкл. лигу», чтобы переключить детализацию.\nКлубная лига всегда активна.");}
 }
 void populate(){
     visibleIds.clear();SendMessageW(listControl,LB_RESETCONTENT,0,0);
     if(page==1||page==3||page==4||page==7||page==8){
-        for(int id:game.ownPlayers()){
-            const auto* p=game.findPlayer(id);if(!p)continue;
+        for(int id:game().ownPlayers()){
+            const auto* p=game().findPlayer(id);if(!p)continue;
             std::string marker=p->starter?"[ОСН] ":"[ЗАП] ";
-            if(page==4&&game.hasLiveMatch()){
-                const auto& live=game.live();
-                const bool home=game.upcomingMatch()&&game.upcomingMatch()->home==game.teamId();
+            if(page==4&&game().hasLiveMatch()){
+                const auto& live=game().live();
+                const bool home=game().upcomingMatch()&&game().upcomingMatch()->home==game().teamId();
                 const auto& xi=home?live.homeXI:live.awayXI;
                 const auto& used=home?live.usedHome:live.usedAway;
                 if(std::find(xi.begin(),xi.end(),p->id)!=xi.end())marker="[ПОЛЕ] ";
@@ -296,16 +300,16 @@ void populate(){
             addList(wide("#"+std::to_string(p->id)+" "+marker+p->position+" "+p->name+(p->injured?" [ТРАВМА]":"")),id);
         }
     }else if(page==6){
-        for(int id:game.transferCandidates()){
-            const auto* p=game.findPlayer(id);if(!p)continue;
+        for(int id:game().transferCandidates()){
+            const auto* p=game().findPlayer(id);if(!p)continue;
             addList(wide(p->position+" | "+p->name+" | "+std::to_string(p->value/1000000.0)+" млн €"),id);
         }
     }else if(page==5||page==14){
-        for(const auto& l:game.leagues()){
+        for(const auto& l:game().leagues()){
             addList(wide(l.country+" • "+l.name+(l.active?" [АКТИВНА]":" [ФОН]")),l.id);
         }
     }else if(page==12){
-        const auto& inbox=game.inbox();
+        const auto& inbox=game().inbox();
         for(int j=int(inbox.size())-1;j>=0;--j)addList(wide(inbox[j].title),j);
     }
     if(!visibleIds.empty()){
@@ -318,17 +322,17 @@ void showPage(int next){
     page=std::clamp(next,0,15);
     lastListIndex=0;
     bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==12||page==14;
-    show(listControl,listNeeded);show(inputControl,page==1||page==6||page==7||page==8||page==9||(page==4&&game.hasLiveMatch()));
+    show(listControl,listNeeded);show(inputControl,page==1||page==6||page==7||page==8||page==9||(page==4&&game().hasLiveMatch()));
     show(pitchWindow,page==4&&showPitch);
     for(int i=0;i<16;++i)show(nav[i],true);
     auto labels=buttonTexts(page);
     for(int i=0;i<5;++i){
         SetWindowTextW(actions[i],labels[i].c_str());show(actions[i],labels[i]!=L"—");
     }
-    show(actions[5],page==10||(page==4&&game.hasLiveMatch()));
+    show(actions[5],page==10||(page==4&&game().hasLiveMatch()));
     SetWindowTextW(actions[5],page==4?L"Заменить":L"Билет −5 €");
     SetWindowTextW(titleText,navLabels[page].c_str());
-    std::wstring sub=wide(game.myClub().name)+L"   •   "+wide(game.dateString())+L"   •   Сезон "+std::to_wstring(game.season())+L"/"+std::to_wstring((game.season()+1)%100);
+    std::wstring sub=wide(game().myClub().name)+L"   •   "+wide(game().dateString())+L"   •   Сезон "+std::to_wstring(game().season())+L"/"+std::to_wstring((game().season()+1)%100);
     SetWindowTextW(subtitleText,sub.c_str());
     if(page==1)SetWindowTextW(inputControl,L"ID игрока основы");
     if(page==4)SetWindowTextW(inputControl,L"ID игрока с поля");
@@ -338,18 +342,18 @@ void showPage(int next){
     if(page==9)SetWindowTextW(inputControl,L"Спасибо за вашу поддержку клуба!");
     populate();
     switch(page){
-        case 0:textContent(game.homeText());break;
+        case 0:textContent(game().homeText());break;
         case 1:case 3:case 5:case 6:case 7:case 8:case 12:case 14:detailForSelected();break;
-        case 2:textContent(game.tacticsText());break;
+        case 2:textContent(game().tacticsText());break;
 
-        case 4:textContent(game.matchText());break;
-        case 9:textContent("БОЛЕЛЬЩИКИ\n\nТекущая поддержка: "+std::to_string(game.myClub().fans)+"/100\n\nНапишите своё обращение в поле ниже.\nРеакции имеют последствия для доверия, посещаемости и отношений внутри клуба.\n\nТекст понимается через локальные правила (без облачного ИИ).");break;
-        case 10:textContent(game.financesText());break;
-        case 11:textContent("АКАДЕМИЯ И МОЛОДЁЖЬ\n\nУровень академии: "+std::to_string(game.myClub().academy)+"/10\n\nНабор юниоров: 350 тыс. €.\nРазвитие академии повышает уровень будущих регенов.\n\nНовые воспитанники попадают в основной список футболистов.");break;
-        case 13:textContent(game.matchArchive());break;
-        case 15:textContent(game.helpText());break;
+        case 4:textContent(game().matchText());break;
+        case 9:textContent("БОЛЕЛЬЩИКИ\n\nТекущая поддержка: "+std::to_string(game().myClub().fans)+"/100\n\nНапишите своё обращение в поле ниже.\nРеакции имеют последствия для доверия, посещаемости и отношений внутри клуба.\n\nТекст понимается через локальные правила (без облачного ИИ).");break;
+        case 10:textContent(game().financesText());break;
+        case 11:textContent("АКАДЕМИЯ И МОЛОДЁЖЬ\n\nУровень академии: "+std::to_string(game().myClub().academy)+"/10\n\nНабор юниоров: 350 тыс. €.\nРазвитие академии повышает уровень будущих регенов.\n\nНовые воспитанники попадают в основной список футболистов.");break;
+        case 13:textContent(game().matchArchive());break;
+        case 15:textContent(game().helpText());break;
     }
-    tell(game.status());arrange();InvalidateRect(pitchWindow,nullptr,TRUE);InvalidateRect(clubLogoWindow,nullptr,TRUE);
+    tell(game().status());arrange();InvalidateRect(pitchWindow,nullptr,TRUE);InvalidateRect(clubLogoWindow,nullptr,TRUE);
 }
 void showSetup(){
     trace("showSetup BEGIN");
@@ -363,12 +367,12 @@ void showSetup(){
     SetWindowTextW(subtitleText,L"Новая карьера • 2026/27 • C++ • Windows");
     SetWindowTextW(setupName,L"Алексей");
     std::vector<std::wstring> clubs;
-    for(const auto& c:game.clubs())clubs.push_back(wide(c.name+" ("+game.leagues()[c.league].country+")"));
+    for(const auto& c:game().clubs())clubs.push_back(wide(c.name+" ("+game().leagues()[c.league].country+")"));
     fillCombo(setupClub,clubs,0);trace("showSetup clubs populated");
     fillCombo(setupRole,{L"Главный тренер",L"Спортивный директор",L"Владелец клуба",L"Президент клуба",L"Песочница (все полномочия)"},0);
     fillCombo(setupDifficulty,{L"Лёгкая",L"Реалистичная",L"Сложная",L"Свободная песочница"},1);
     SendMessageW(setupLeagues,LB_RESETCONTENT,0,0);
-    for(const auto& l:game.leagues())SendMessageW(setupLeagues,LB_ADDSTRING,0,LPARAM(wide(l.country+" — "+l.name).c_str()));
+    for(const auto& l:game().leagues())SendMessageW(setupLeagues,LB_ADDSTRING,0,LPARAM(wide(l.country+" — "+l.name).c_str()));
     for(int i=0;i<6;++i)SendMessageW(setupLeagues,LB_SETSEL,i<2,i);
     SetWindowTextW(setupHelp,L"Укажите имя, клуб, должность, сложность.\nВ списке справа отметьте активные лиги (Ctrl/Shift не нужны).\nЛига выбранного клуба включится автоматически.");
     tell("Демо-база: известные клубы, процедурные игроки. Полная лицензированная база ещё не добавлена.");
@@ -379,8 +383,8 @@ void startCareer(){
     int role=int(SendMessageW(setupRole,CB_GETCURSEL,0,0));
     int diff=int(SendMessageW(setupDifficulty,CB_GETCURSEL,0,0));
     std::vector<int> active;
-    for(int i=0;i<int(game.leagues().size());++i)if(SendMessageW(setupLeagues,LB_GETSEL,i,0)>0)active.push_back(i);
-    game.newCareer(utf8(getText(setupName)),club,fu::Role(std::clamp(role,0,4)),fu::Difficulty(std::clamp(diff,0,3)),active);
+    for(int i=0;i<int(game().leagues().size());++i)if(SendMessageW(setupLeagues,LB_GETSEL,i,0)>0)active.push_back(i);
+    game().newCareer(utf8(getText(setupName)),club,fu::Role(std::clamp(role,0,4)),fu::Difficulty(std::clamp(diff,0,3)),active);
     started=true;
     show(setupName,false);show(setupClub,false);show(setupRole,false);show(setupDifficulty,false);
     show(setupLeagues,false);show(setupHelp,false);show(setupStart,false);show(setupLoad,false);
@@ -392,82 +396,82 @@ void trigger(int action){
     std::string response;
     auto go=[&](int p){showPage(p);};
     if(page==0){
-        if(action==0)game.advance(1);
-        if(action==1)game.advance(7);
-        if(action==2)response=game.save(saveFile);
-        if(action==3)response=game.load(saveFile);
+        if(action==0)game().advance(1);
+        if(action==1)game().advance(7);
+        if(action==2)response=game().save(saveFile);
+        if(action==3)response=game().load(saveFile);
         if(action==4){go(4);return;}
     }else if(page==1){
         if(action==0){
-            try{response=game.swapStarter(id,std::stoi(text));}
+            try{response=game().swapStarter(id,std::stoi(text));}
             catch(...){response="Введите числовой ID игрока, которого убираем из основы.";}
         }
-        if(action==1)response=game.autoPickLineup();
+        if(action==1)response=game().autoPickLineup();
         if(action==2){go(8);return;}
         if(action==3){go(7);return;}
     }else if(page==2){
-        if(action==0)game.changeFormation();
-        if(action==1)game.changeTactic();
+        if(action==0)game().changeFormation();
+        if(action==1)game().changeTactic();
         if(action==2){go(3);return;}
         if(action==3){go(4);return;}
     }else if(page==3){
-        if(action==0)game.changeTraining();
-        if(action==1)response=game.cycleTrainingFocus(id);
+        if(action==0)game().changeTraining();
+        if(action==1)response=game().cycleTrainingFocus(id);
         if(action==2){go(1);return;}
-        if(action==3)game.advance(1);
+        if(action==3)game().advance(1);
     }else if(page==4){
-        if(action==0)game.startLiveMatch();
-        if(action==1)game.stepLiveMatch(15);
-        if(action==2)game.instantMatch();
-        if(action==3)game.changeTactic();
+        if(action==0)game().startLiveMatch();
+        if(action==1)game().stepLiveMatch(15);
+        if(action==2)game().instantMatch();
+        if(action==3)game().changeTactic();
         if(action==4)showPitch=!showPitch;
         if(action==5){
-            try{response=game.substitute(std::stoi(text),id);}
+            try{response=game().substitute(std::stoi(text),id);}
             catch(...){response="Введите числовой ID футболиста с поля и выберите запасного слева.";}
         }
     }else if(page==5){
-        if(action==0){id=game.myClub().league;lastListIndex=id;}
-        if(action==1)lastListIndex=(lastListIndex+1)%int(game.leagues().size());
+        if(action==0){id=game().myClub().league;lastListIndex=id;}
+        if(action==1)lastListIndex=(lastListIndex+1)%int(game().leagues().size());
     }else if(page==6){
         if(action==0){
-            try{response=game.transferBid(id,std::stoi(text));}
+            try{response=game().transferBid(id,std::stoi(text));}
             catch(...){response="Введите сумму предложения в евро, например 10000000";}
         }
         if(action==2){go(1);return;}
     }else if(page==7){
         if(action==0){
             std::istringstream in(text);int wage=0,years=0;
-            if(in>>wage>>years)response=game.renewContract(id,wage,years);
+            if(in>>wage>>years)response=game().renewContract(id,wage,years);
             else response="Введите зарплату и срок: 30000 3";
         }
         if(action==1){go(1);return;}
     }else if(page==8){
-        if(action==0)response=game.talk(id,text);
-        if(action==1)response=game.talk(id,"Молодец! Я ценю твою работу.");
-        if(action==2)response=game.talk(id,"Как дела в семье? Давай поможем с переездом и адаптацией.");
+        if(action==0)response=game().talk(id,text);
+        if(action==1)response=game().talk(id,"Молодец! Я ценю твою работу.");
+        if(action==2)response=game().talk(id,"Как дела в семье? Давай поможем с переездом и адаптацией.");
     }else if(page==9){
-        if(action==0)response=game.speakToFans(text);
-        if(action==1)response=game.speakToFans("Спасибо всем за поддержку нашего клуба!");
-        if(action==2)response=game.speakToFans("Приглашаю лидеров болельщиков на встречу. Давайте обсудим проблемы и поддержку.");
+        if(action==0)response=game().speakToFans(text);
+        if(action==1)response=game().speakToFans("Спасибо всем за поддержку нашего клуба!");
+        if(action==2)response=game().speakToFans("Приглашаю лидеров болельщиков на встречу. Давайте обсудим проблемы и поддержку.");
     }else if(page==10){
-        if(action==0)response=game.spendMoney("stadium");
-        if(action==1)response=game.spendMoney("training");
-        if(action==2)response=game.spendMoney("academy");
-        if(action==3)response=game.negotiateSponsor();
-        if(action==4)response=game.adjustTickets(+5);
-        if(action==5)response=game.adjustTickets(-5);
+        if(action==0)response=game().spendMoney("stadium");
+        if(action==1)response=game().spendMoney("training");
+        if(action==2)response=game().spendMoney("academy");
+        if(action==3)response=game().negotiateSponsor();
+        if(action==4)response=game().adjustTickets(+5);
+        if(action==5)response=game().adjustTickets(-5);
     }else if(page==11){
-        if(action==0)response=game.recruitYouth();
-        if(action==1)response=game.spendMoney("academy");
+        if(action==0)response=game().recruitYouth();
+        if(action==1)response=game().spendMoney("academy");
         if(action==2){go(1);return;}
     }else if(page==12){if(action==1){go(0);return;}}
     else if(page==13){if(action==1){go(4);return;}}
     else if(page==14){
-        if(action==0)game.toggleLeague(id);
+        if(action==0)game().toggleLeague(id);
         if(action==1){showSetup();return;}
-        if(action==2)response=game.save(saveFile);
-        if(action==3)response=game.load(saveFile);
-        if(action==4)response=game.importPlayers("data/players.csv")?"CSV загружен":"Не удалось загрузить data/players.csv";
+        if(action==2)response=game().save(saveFile);
+        if(action==3)response=game().load(saveFile);
+        if(action==4)response=game().importPlayers("data/players.csv")?"CSV загружен":"Не удалось загрузить data/players.csv";
     }else if(page==15){if(action==0){go(0);return;}}
     int old=lastListIndex;
     showPage(page);
@@ -530,7 +534,7 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         if(id==SETUP_CLUB&&code==CBN_SELCHANGE){InvalidateRect(clubLogoWindow,nullptr,TRUE);return 0;}
         if(id==SETUP_START&&code==BN_CLICKED){startCareer();return 0;}
         if(id==SETUP_LOAD&&code==BN_CLICKED){
-            std::string result=game.load(saveFile);
+            std::string result=game().load(saveFile);
             if(result.find("загружена")!=std::string::npos){
                 started=true;show(setupName,false);show(setupClub,false);show(setupRole,false);show(setupDifficulty,false);
                 show(setupLeagues,false);show(setupHelp,false);show(setupStart,false);show(setupLoad,false);
