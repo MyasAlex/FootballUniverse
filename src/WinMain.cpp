@@ -145,7 +145,10 @@ void arrange(){
         move(titleText,left,24,bodyWidth-100,40);
         move(subtitleText,left,65,bodyWidth-100,22);
         move(clubLogoWindow,right-85,12,82,82);
-        for(int i=0;i<16;++i)move(nav[i],15,75+i*37,187,34);
+        // Adaptive navigation: prevent the bottom items from overlapping the status bar.
+        const int navStep=std::clamp((h-150)/16,27,37);
+        for(int i=0;i<16;++i)
+            move(nav[i],15,75+i*navStep,187,std::min(34,navStep-2));
         bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15;
         bool pitchNeeded=(page==4&&showPitch);
         int contentY=102,contentH=std::max(300,h-284);
@@ -378,7 +381,7 @@ void showPage(int next){
     lastListIndex=0;
     // Owner-draw nav does not automatically repaint when a different page is selected.
     for(auto& button:nav)if(button)InvalidateRect(button,nullptr,TRUE);
-    bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==12||page==14||page==15;
+    bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15;
     show(listControl,listNeeded);show(inputControl,page==1||page==6||page==7||page==8||page==9||page==11||page==3||(page==4&&game().hasLiveMatch()));
     show(pitchWindow,page==4&&showPitch);
     for(int i=0;i<16;++i)show(nav[i],true);
