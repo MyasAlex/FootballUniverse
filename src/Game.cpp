@@ -398,6 +398,8 @@ std::string Game::squadText()const{
     o<<"Шкала навыков: 0–100. Состояние, мораль, контракты и\nотношения изменяются в ходе карьеры.\n\n";
     o<<"Количество футболистов: "<<ownPlayers().size()<<"\n";
     o<<"Основа: "<<starters(teamId_).size()<<"/11\n";
+    if(const Player* p=findPlayer(myClub().captainId))o<<"Капитан: "<<p->name<<"\n";
+    if(const Player* p=findPlayer(myClub().viceCaptainId))o<<"Вице-капитан: "<<p->name<<"\n";
     int injured=0,unhappy=0;for(const auto& p:players_)if(p.club==teamId_){injured+=p.injured>0;unhappy+=p.morale<45;}
     o<<"Травмировано: "<<injured<<"\nНедовольны: "<<unhappy<<"\n";
     return o.str();
@@ -429,7 +431,9 @@ std::string Game::tacticsText()const{
     o<<"Схема: "<<formations[c.formation]<<"\n";
     o<<"Стиль: "<<tactics[c.tactic]<<"\n";
     o<<"Тренировки: "<<trainings[c.training]<<"\n\n";
-    o<<"Сила команды: "<<rating(c)<<" (с учётом доступных игроков)\n\n";
+    o<<"Сила команды: "<<rating(c)<<" (с учётом доступных игроков)\n";
+    if(const Player* cap=findPlayer(c.captainId))o<<"Капитан: "<<cap->name<<"\n";
+    o<<"Собрание команды: раз в 7 дней во вкладке «Разговоры»\n\n";
     o<<"Тактика влияет на вероятность атаки, голевые моменты,\nусталость и риск пропустить гол.\n";
     o<<"Тренировки влияют на форму, мораль и развитие навыков.\n";
     o<<"Выберите индивидуальный фокус во вкладке «Тренировки».\n";
@@ -462,11 +466,14 @@ std::string Game::newsText()const{
     return o.str();
 }
 std::string Game::helpText()const{
-    return "FOOTBALL UNIVERSE 0.3 / ПРОТОТИП\n\n"
+    return "FOOTBALL UNIVERSE 0.4 / ПРОТОТИП\n\n"
     "Это самостоятельная C++-игра с текстовым и 2D-отображением матча.\n"
     "Создайте карьеру, выберите должность, сложность, клуб и активные лиги.\n"
     "Меню слева открывает все игровые системы.\n\n"
     "Состав: выберите запасного, впишите ID игрока основы, нажмите «В основу».\n"
+    "Капитан и вице-капитан: выделите своего игрока и назначьте во вкладке «Состав».\n"
+    "Разговоры: проводите командные собрания с моральными последствиями раз в 7 дней.\n"
+    "Трансферы: назначайте наблюдение за игроком и пополняйте короткий список.\n"
     "Тренировки: выберите игрока и переключайте индивидуальный фокус.\n"
     "Матч: в интерактивном режиме выберите запасного, введите ID выходящего игрока,\n"
     "нажмите «Заменить». До 5 замен, повторный выход запрещён.\n\n"
@@ -480,7 +487,43 @@ std::string Game::helpText()const{
     "Система переговоров и диалогов работает по правилам, без облачного ИИ.\n\n"
     "Проект не связан с Sports Interactive или Football Manager.\n";
 }
+std::string Game::teamTalk(int tone){
+    if(!permissionSports())return status_="Нет полномочий проводить командные собрания.";
+    if(hasLiveMatch())return status_="Собрание доступно вне матча.";
+    if(tone<0||tone>2)return status_="Неизвестный тип собрания.";
+    if(totalDays_-lastTeamTalkDay_<7)
+        return status_="Команде нужен отдых от собраний. Новая встреча через "+std::to_string(7-(totalDays_-lastTeamTalkDay_))+" дн.";
+    lastTeamTalkDay_=totalDays_;
+    int positive=0,negative=0;
+    const int played=myClub().wins+myClub().draws+myClub().losses;
+    for(auto& p:players_)if(p.club==teamId_){
+        int change=0;
+        if(tone==0)change=3+(p.loyalty>65?2:0);
+        else if(tone==1)change=played==0||myClub().wins*2>=played?5:0;
+        else change=p.personality=="Профессионал"||p.personality=="Трудолюбивый"?2:-6;
+        if(p.id==myClub().captainId)change+=2;
+        p.morale=clamp(p.morale+change);
+        p.trust=clamp(p.trust+(change>0?2:change<0?-3:0));
+        if(change>0)++positive;
+        else if(change<0)++negative;
+    }
+    const std::string kind=tone==0?"Мотивационная встреча":tone==1?"Похвала команде":"Жёсткий разговор";
+    status_=kind+": поддержали "+std::to_string(positive)+", недовольны "+std::to_string(negative)+" игроков.";
+    addMessage("Собрание в раздевалке",status_);
+    return status_;
+}
 void Game::dailyTick(){
+    for(auto& report:scouts_)if(report.days<5){
+        ++report.days;
+        if(report.days==5){
+            if(const Player* p=findPlayer(report.playerId)){
+                report.ability=clamp(playerRating(*p)+random(-6,6));
+                report.potential=clamp(p->potential+random(-8,8));
+                addMessage("Скаутский отчёт готов",p->name+": оценка "+std::to_string(report.ability)+
+                           "/100, потенциал "+std::to_string(report.potential)+"/100. Откройте «Трансферы».");
+            }
+        }
+    }
     auto& c=myClub();
     for(auto& p:players_){
         if(p.injured>0){--p.injured;p.fitness=clamp(p.fitness+2);continue;}
@@ -574,6 +617,7 @@ void Game::newSeason(){
         }
     }
     for(const auto& m:matches_)if(m.played)archive_.push_back(m);
+    autoAssignCaptains();
     for(const auto& c:clubs_)pickLineup(c.id);
     createFixtures();live_={};
     addMessage("Новый сезон", "Сезон "+std::to_string(old)+"/"+std::to_string((old+1)%100)+" завершён. Начинается "+std::to_string(season_)+"/"+std::to_string((season_+1)%100)+". Регены добавлены, игроки постарели.");
@@ -822,6 +866,7 @@ std::string Game::transferBid(int playerId,int offered){
         clubs_[p->club].budget+=offered;
         int priorClub=p->club;
         p->club=teamId_;p->starter=false;p->contractYear=season_+3;p->morale=clamp(p->morale+7);p->trust=50;
+        autoAssignCaptains();
         pickLineup(priorClub);pickLineup(teamId_);
         status_="Трансфер состоялся: "+p->name+" из "+old+" за "+money(offered);
         addMessage("Сделка завершена",status_);
