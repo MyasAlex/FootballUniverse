@@ -2160,8 +2160,8 @@ std::string Game::load(const std::string& path){
     if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
     const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9");
-    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8");
-    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8");
+    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9");
+    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9");
     const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9");
     const bool version9=(header=="FUSAVE_9");
     Game loaded;
