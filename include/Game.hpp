@@ -30,7 +30,8 @@ struct Club {
     int formation=0, tactic=1, training=1;
     int captainId=-1, viceCaptainId=-1;
 };
-struct League { int id=0; std::string country, name; bool active=true; };
+// systemId identifies one country pyramid; tier: 0 top, 1 second division.
+struct League { int id=0; std::string country, name; bool active=true; int tier=0, systemId=0; };
 struct Event { int minute=0; std::string text; };
 struct Match {
     int id=0, season=2026, day=0, home=0, away=0, homeGoals=0, awayGoals=0;
@@ -47,6 +48,16 @@ struct CupCompetition {
 };
 struct TrophyRecord { int season=2026, cupId=0, winner=-1, runnerUp=-1; };
 struct LeagueRecord { int season=2026, leagueId=0, winner=-1, runnerUp=-1, points=0; };
+struct LeagueMovement { int season=2026, systemId=0, promotedClub=-1, relegatedClub=-1; };
+struct CoachRecord {
+    int clubId=0, ability=55, jobSecurity=65, contractYear=2028, hiredDay=0;
+    std::string name;
+    bool vacant=false;
+};
+struct JobApplication {
+    int clubId=-1, submittedDay=0, responseDay=0, expiresDay=0;
+    int stage=-1, proposedSalary=0; // -1 none, 0 pending, 1 offered, 2 rejected, 3 accepted, 4 cancelled/expired
+};
 struct Message { int day=0; std::string title, body; };
 struct ScoutReport { int playerId=0, days=0, ability=0, potential=0; bool shortlisted=false; };
 enum class DealStage : int {
@@ -100,6 +111,15 @@ public:
     const std::vector<CupCompetition>& cups() const { return cups_; }
     const std::vector<TrophyRecord>& trophyHistory() const { return trophies_; }
     const std::vector<LeagueRecord>& leagueHistory() const { return leagueHistory_; }
+    const std::vector<LeagueMovement>& leagueMovements() const { return movements_; }
+    const std::vector<CoachRecord>& coaches() const { return coaches_; }
+    const JobApplication& jobApplication() const { return job_; }
+    int managerReputation() const { return reputation_; }
+    std::string jobMarketText(int clubId=-1) const;
+    std::string applyForJob(int clubId);
+    std::string acceptJobOffer();
+    std::string withdrawApplication();
+    std::string divisionsText() const;
     std::string calendarText() const;
     std::string cupsText() const;
     std::string seasonHistoryText() const;
@@ -203,6 +223,10 @@ private:
     std::vector<CupCompetition> cups_;
     std::vector<TrophyRecord> trophies_;
     std::vector<LeagueRecord> leagueHistory_;
+    std::vector<LeagueMovement> movements_;
+    std::vector<CoachRecord> coaches_;
+    JobApplication job_;
+    int reputation_=55;
     std::vector<Message> inbox_;
     std::vector<ScoutReport> scouts_;
     std::vector<TransferDeal> deals_;
@@ -231,6 +255,13 @@ private:
     void createSquads();
     void autoAssignCaptains();
     void createFixtures();
+    void appendSecondDivisions(bool addFixtures);
+    void seedCoaches();
+    void processCoachMarket();
+    void processJobApplication();
+    void processPromotionRelegation(int oldSeason);
+    std::vector<int> rankedClubs(int leagueId) const;
+    void addFixturesForLeague(int leagueId);
     void createCups(const std::vector<int>& continentalEntrants={});
     void progressCups();
     void addCupMatch(int competition,int round,int day,int home,int away);
