@@ -899,39 +899,107 @@ std::string Game::negotiationText(int playerId)const{
     return o.str();
 }
 std::string Game::transferBid(int playerId,int offered){
+    return offerStructuredTransfer(playerId,offered,1,0,0,-1);
+}
+std::string Game::offerStructuredTransfer(int playerId,int fee,int installments,int appearanceBonus,int sellOnPct,int exchangePlayerId){
     if(!permissionSports())return status_="Нужны полномочия спортивного руководства.";
     if(hasLiveMatch())return status_="Нельзя вести переговоры во время матча.";
     const Player* p=findPlayer(playerId);
-    if(!p||p->club==teamId_)return status_="Выберите игрока другого клуба.";
-    if(offered<=0||offered>500000000)return status_="Введите сумму от 1 до 500 млн €.";
-    if(!canFinance(offered))return status_="Для такого предложения недостаточно бюджета.";
+    if(!p||p->club==teamId_||p->parentClub>=0)return status_="Выберите доступного игрока другого клуба.";
+    if(fee<1||fee>500000000||installments<1||installments>12||
+       appearanceBonus<0||appearanceBonus>50000000||sellOnPct<0||sellOnPct>40)
+        return status_="Неверные параметры: сумма до 500 млн, 1–12 платежей, бонус до 50 млн, перепродажа до 40%.";
+    const Player* exchanged=nullptr;
+    if(exchangePlayerId>=0){
+        exchanged=findPlayer(exchangePlayerId);
+        if(!exchanged||exchanged->club!=teamId_||exchanged->parentClub>=0||exchangePlayerId==playerId)
+            return status_="Для обмена выберите собственного футболиста, не находящегося в аренде.";
+    }
+    const int upfront=fee/installments + (fee%installments);
+    if(!canFinance(upfront))return status_="Недостаточно бюджета для первого взноса.";
     TransferDeal* current=nullptr;
     for(auto it=deals_.rbegin();it!=deals_.rend();++it)
         if(it->playerId==playerId){current=&*it;break;}
-    if(current&&current->stage!=DealStage::ClubCounter&&int(current->stage)<=4)
+    if(current&&int(current->stage)<=4&&current->stage!=DealStage::ClubCounter)
         return status_="Переговоры уже идут. Посмотрите их статус справа.";
     if(current&&current->stage==DealStage::ClubCounter){
+        if(current->kind!=0)return status_="Это аренда. Для изменения условий используйте кнопку «Аренда».";
         if(current->rounds>=4)return status_="Клуб отказался обсуждать дополнительные предложения.";
-        current->fee=offered;
+        const bool simple=(installments==1&&appearanceBonus==0&&sellOnPct==0&&exchangePlayerId<0);
+        current->fee=fee;
+        if(!simple){
+            current->installments=installments;current->appearanceBonus=appearanceBonus;
+            current->sellOnPct=sellOnPct;current->exchangePlayerId=exchangePlayerId;
+        }
+        current->askingFee=std::max(1,current->askingFee-(exchanged?exchanged->value*70/100:0));
         current->stage=DealStage::ClubReview;
         current->replyDay=totalDays_+1;
-        current->rounds++;
+        ++current->rounds;
         return status_="Новое предложение отправлено. Ответ клуба ожидается завтра.";
     }
-    const int requested=int(std::min<int64_t>(500000000LL,
+    const int totalAsking=int(std::min<int64_t>(500000000LL,
         int64_t(p->value)*(difficulty_==Difficulty::Hard?145:difficulty_==Difficulty::Easy?100:120)/100+
         (p->contractYear>season_+2?p->value/10:0)));
+    const int askingCash=std::max(1,totalAsking-(exchanged?exchanged->value*70/100:0)-
+          std::min(appearanceBonus,50000000)/4);
     int rival=-1;
     if(random(0,3)==0){
-        int bestPrestige=-1;
+        int top=-1;
         for(const auto& c:clubs_)
-            if(c.id!=teamId_&&c.id!=p->club&&leagues_[c.league].active&&c.prestige>bestPrestige){
-                bestPrestige=c.prestige;rival=c.id;
+            if(c.id!=teamId_&&c.id!=p->club&&leagues_[c.league].active&&c.prestige>top){
+                top=c.prestige;rival=c.id;
             }
     }
-    deals_.push_back(TransferDeal{playerId,p->club,offered,requested,0,0,3,totalDays_,totalDays_+1,totalDays_+21,rival,0,DealStage::ClubReview});
-    return status_="Официальное предложение "+money(offered)+" по "+p->name+
+    TransferDeal d;
+    d.playerId=playerId;d.sellerClub=p->club;d.fee=fee;d.askingFee=askingCash;
+    d.submittedDay=totalDays_;d.replyDay=totalDays_+1;d.expiryDay=totalDays_+21;d.rivalClub=rival;
+    d.installments=installments;d.appearanceBonus=appearanceBonus;d.sellOnPct=sellOnPct;
+    d.exchangePlayerId=exchangePlayerId;
+    // Paying a published release clause in full bypasses the selling club's approval.
+    if(p->releaseClause>0&&fee>=p->releaseClause&&installments==1&&exchangePlayerId<0){
+        d.stage=DealStage::AgentOffer;
+        const int gap=clubs_[d.sellerClub].prestige-myClub().prestige;
+        d.askingWage=int(std::min<int64_t>(20000000LL,
+            std::max<int64_t>(500,int64_t(p->wage)*(125+std::max(0,gap)/2)/100)));
+    }
+    deals_.push_back(d);
+    if(d.stage==DealStage::AgentOffer){
+        addMessage("Активированы отступные",p->name+": предложение "+money(fee)+
+                   " удовлетворяет условию выкупа. Теперь обсудите зарплату с агентом.");
+        return status_="Активированы отступные. Перейдите к личному контракту.";
+    }
+    return status_="Официальное предложение "+money(fee)+" по "+p->name+
                    " отправлено в "+clubs_[p->club].name+". Ответ через игровой день.";
+}
+std::string Game::offerLoan(int playerId,int fee,int wageShare,int durationDays){
+    if(!permissionSports())return status_="Нет полномочий на аренду.";
+    if(hasLiveMatch())return status_="Сначала завершите матч.";
+    const Player* p=findPlayer(playerId);
+    if(!p||p->club==teamId_||p->parentClub>=0)return status_="Футболист недоступен для аренды.";
+    if(fee<0||fee>100000000||wageShare<0||wageShare>100||durationDays<30||durationDays>330)
+        return status_="Аренда: сумма 0–100 млн €, доля зарплаты 0–100%, срок 30–330 дней.";
+    if(!canFinance(fee))return status_="Недостаточно средств на аренду.";
+    TransferDeal* current=nullptr;
+    for(auto it=deals_.rbegin();it!=deals_.rend();++it)
+        if(it->playerId==playerId){current=&*it;break;}
+    if(current&&int(current->stage)<=4&&current->stage!=DealStage::ClubCounter)
+        return status_="По футболисту уже идут переговоры.";
+    if(current&&current->stage==DealStage::ClubCounter&&current->kind!=1)
+        return status_="По этому футболисту идёт переговорный процесс о покупке.";
+    const int requested=std::min(100000000,
+        p->value/20+std::max(0,60-wageShare)*p->value/600);
+    if(current&&current->stage==DealStage::ClubCounter){
+        current->fee=fee;current->loanWageShare=wageShare;current->loanDays=durationDays;
+        current->stage=DealStage::ClubReview;current->replyDay=totalDays_+1;
+        ++current->rounds;
+        return status_="Новые условия аренды отправлены клубу.";
+    }
+    TransferDeal d;
+    d.kind=1;d.playerId=playerId;d.sellerClub=p->club;
+    d.fee=fee;d.askingFee=requested;d.loanWageShare=wageShare;d.loanDays=durationDays;
+    d.submittedDay=totalDays_;d.replyDay=totalDays_+1;d.expiryDay=totalDays_+14;
+    deals_.push_back(d);
+    return status_="Предложение аренды "+p->name+" направлено клубу. Ответ через день.";
 }
 std::string Game::proposePlayerContract(int playerId,int weeklyWage,int years){
     if(!permissionSports())return status_="Нет полномочий согласовывать личные контракты.";
