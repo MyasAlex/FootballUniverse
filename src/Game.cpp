@@ -1643,7 +1643,7 @@ std::string Game::load(const std::string& path){
                        d.loanDays<30||d.loanDays>330||
                        d.loanWageShare<0||d.loanWageShare>100)
                         throw std::runtime_error("Дополнительные условия сделки");
-                    if(d.exchangePlayerId>=0&&!loaded.findPlayer(d.exchangePlayerId))
+                    if(stage<=4&&d.exchangePlayerId>=0&&!loaded.findPlayer(d.exchangePlayerId))
                         throw std::runtime_error("Игрок для обмена отсутствует");
                 }
                 d.stage=DealStage(stage);
@@ -1655,7 +1655,7 @@ std::string Game::load(const std::string& path){
                 DeferredPayment payment;
                 if(!(f>>payment.playerId>>payment.buyerClub>>payment.sellerClub>>
                       payment.amount>>payment.dueDay>>payment.triggerAppearances)||
-                    !loaded.findPlayer(payment.playerId)||
+                    (payment.triggerAppearances>0&&!loaded.findPlayer(payment.playerId))||
                     payment.buyerClub<0||payment.buyerClub>=int(loaded.clubs_.size())||
                     payment.sellerClub<0||payment.sellerClub>=int(loaded.clubs_.size())||
                     payment.amount<0||payment.amount>500000000||
