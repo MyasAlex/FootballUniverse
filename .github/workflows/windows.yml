@@ -1,0 +1,51 @@
+name: Compile Windows game (no PC compiler required)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    name: Windows x64 Release
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    steps:
+      - name: Get sources
+        uses: actions/checkout@v4
+      - name: Configure with Visual Studio C++ compiler
+        run: cmake -S . -B build-cloud -G "Visual Studio 17 2022" -A x64
+      - name: Compile game and tests
+        run: cmake --build build-cloud --config Release --parallel 2
+      - name: Test game engine
+        run: ctest --test-dir build-cloud -C Release --output-on-failure
+      - name: Package portable EXE and resources
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = 'dist/FootballUniverse'
+          New-Item -ItemType Directory -Path $folder -Force | Out-Null
+          Copy-Item 'build-cloud/Release/FootballUniverse.exe' "$folder/FootballUniverse.exe"
+          Copy-Item 'data' "$folder/data" -Recurse
+          Copy-Item 'assets' "$folder/assets" -Recurse
+          @'
+          @echo off
+          cd /d "%~dp0"
+          start "" "FootballUniverse.exe"
+          '@ | Set-Content "$folder/PLAY.bat" -Encoding Ascii
+          @'
+          Football Universe 0.3.1 - Windows x64
+          Run PLAY.bat or FootballUniverse.exe.
+          C++ and Visual Studio are NOT required to run.
+          Save files (career.fus) remain in the game folder if started through PLAY.bat.
+          This is an early prototype. Some Windows features are unverified.
+          '@ | Set-Content "$folder/READ_FIRST.txt" -Encoding UTF8
+          Compress-Archive -Path "$folder/*" -DestinationPath 'dist/FootballUniverse_Windows_x64.zip' -Force
+      - name: Downloadable Windows ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: FootballUniverse-Windows-EXE
+          path: dist/FootballUniverse_Windows_x64.zip
+          if-no-files-found: error
+          retention-days: 30

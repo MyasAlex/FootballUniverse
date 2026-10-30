@@ -1,0 +1,35 @@
+cmake_minimum_required(VERSION 3.20)
+project(FootballUniverse VERSION 0.3.1 LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_library(fu_core src/Game.cpp)
+target_include_directories(fu_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+if(WIN32)
+    add_executable(FootballUniverse WIN32 src/WinMain.cpp)
+    target_link_libraries(FootballUniverse PRIVATE fu_core comctl32 gdi32 user32 gdiplus)
+    target_compile_definitions(FootballUniverse PRIVATE UNICODE _UNICODE NOMINMAX)
+    add_custom_command(TARGET FootballUniverse POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:FootballUniverse>/data"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/data/players.csv"
+            "$<TARGET_FILE_DIR:FootballUniverse>/data/players.csv"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/assets/clubs"
+            "$<TARGET_FILE_DIR:FootballUniverse>/assets/clubs")
+    if(MSVC)
+        target_compile_options(FootballUniverse PRIVATE /utf-8 /W4)
+        target_compile_options(fu_core PRIVATE /utf-8 /W4)
+    endif()
+else()
+    add_executable(fu_demo src/DemoMain.cpp)
+    target_link_libraries(fu_demo PRIVATE fu_core)
+endif()
+add_executable(fu_tests tests/test_game.cpp)
+target_link_libraries(fu_tests PRIVATE fu_core)
+enable_testing()
+add_test(NAME core_simulation COMMAND fu_tests)
+set_tests_properties(core_simulation PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+add_executable(fu_lineup_tests tests/test_lineup.cpp)
+target_link_libraries(fu_lineup_tests PRIVATE fu_core)
+add_test(NAME match_lineup_and_substitutions COMMAND fu_lineup_tests)
