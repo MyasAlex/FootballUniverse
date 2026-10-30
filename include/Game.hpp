@@ -35,6 +35,17 @@ struct Match {
 };
 struct Message { int day=0; std::string title, body; };
 struct ScoutReport { int playerId=0, days=0, ability=0, potential=0; bool shortlisted=false; };
+enum class DealStage : int {
+    ClubReview=0, ClubCounter=1, AgentOffer=2, AgentReview=3,
+    AgentCounter=4, Completed=5, Rejected=6, Cancelled=7, RivalSigned=8
+};
+struct TransferDeal {
+    int playerId=0, sellerClub=-1, fee=0, askingFee=0;
+    int wage=0, askingWage=0, years=3;
+    int submittedDay=0, replyDay=0, expiryDay=0;
+    int rivalClub=-1, rounds=0;
+    DealStage stage=DealStage::ClubReview;
+};
 struct LiveMatch {
     int id=-1, minute=0, goalsH=0, goalsA=0, shotsH=0, shotsA=0, xgH=0, xgA=0;
     int subsH=0, subsA=0;
@@ -57,6 +68,12 @@ public:
     const std::vector<Message>& inbox() const { return inbox_; }
     const std::vector<ScoutReport>& scoutReports() const { return scouts_; }
     const ScoutReport* scoutReport(int playerId) const;
+    const TransferDeal* transferDeal(int playerId) const;
+    const std::vector<TransferDeal>& transferDeals() const { return deals_; }
+    std::string negotiationText(int playerId) const;
+    std::string proposePlayerContract(int playerId, int weeklyWage, int years);
+    std::string acceptNegotiationTerms(int playerId);
+    std::string cancelNegotiation(int playerId);
     const Club& myClub() const;
     Club& myClub();
     const Player* findPlayer(int id) const;
@@ -126,6 +143,9 @@ private:
     std::vector<Match> archive_;
     std::vector<Message> inbox_;
     std::vector<ScoutReport> scouts_;
+    std::vector<TransferDeal> deals_;
+    void processTransferNegotiations();
+    void finalizeTransfer(TransferDeal& deal);
     int lastTeamTalkDay_=-30;
     std::string manager_="Manager", status_;
     int teamId_=0, day_=0, season_=2026, totalDays_=0, nextPlayerId_=1;
