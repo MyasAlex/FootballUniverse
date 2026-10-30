@@ -113,6 +113,11 @@ std::string playerDetails(int id){
     o<<"Характер: "<<p->personality<<"\n";
     o<<"Зарплата: "<<p->wage<<" € в неделю\nСтоимость: "<<p->value<<" €\n";
     o<<"Контракт до: "<<p->contractYear<<"\n";
+    o<<"Отступные: "<<(p->releaseClause?std::to_string(p->releaseClause)+" €":"нет")<<"\n";
+    if(p->sellOnPct)o<<"Процент от перепродажи: "<<p->sellOnPct<<"% в пользу клуба #"<<p->sellOnClub<<"\n";
+    if(p->parentClub>=0)o<<"АРЕНДА: принадлежит клубу #"<<p->parentClub
+        <<", вернётся через "<<std::max(0,p->loanReturnDay-game().totalDays())
+        <<" дн., доля зарплаты "<<p->loanWageShare<<"%\n";
     if(p->club==game().teamId()){
         if(game().myClub().captainId==p->id)o<<"РОЛЬ: КАПИТАН\n";
         if(game().myClub().viceCaptainId==p->id)o<<"РОЛЬ: ВИЦЕ-КАПИТАН\n";
@@ -170,8 +175,8 @@ std::vector<std::wstring> buttonTexts(int p){
         case 3:return {L"План команды",L"Фокус игрока",L"Состав",L"День +1",L"Обновить"};
         case 4:return {L"Начать матч",L"+15 минут",L"Мгновенно",L"Сменить тактику",L"2D / текст"};
         case 5:return {L"Лига клуба",L"Другая лига",L"Обновить",L"—",L"—"};
-        case 6:return {L"Отправить оффер",L"Скаутировать",L"В список / убрать",L"Короткий список",L"Принять условия"};
-        case 7:return {L"Предложить",L"Состав",L"Обновить",L"—",L"—"};
+        case 6:return {L"Оффер / аренда",L"Скаутировать",L"В список / убрать",L"Короткий список",L"Принять условия"};
+        case 7:return {L"Контракт",L"Состав",L"Продать",L"Отступные",L"—"};
         case 8:return {L"Отправить текст",L"Похвалить",L"Помочь семье",L"Собрание",L"Похвала команде"};
         case 9:return {L"Обратиться",L"Поблагодарить",L"Встреча",L"Обновить",L"—"};
         case 10:return {L"Стадион",L"Трениров. база",L"Академия",L"Спонсор",L"Билет +5 €"};
@@ -282,7 +287,20 @@ void detailForSelected(){
     if(page==1)textContent(playerDetails(id)+"\n\n"+game().lineupText());
     else if(page==3)textContent(game().tacticsText()+"\n"+playerDetails(id)+"\nНажмите «Фокус игрока» для переключения навыка.");
     else if(page==6)textContent(playerDetails(id)+"\n\n"+game().scoutText(id)+"\n"+game().negotiationText(id));
-    else if(page==7||page==8)textContent(playerDetails(id));
+    else if(page==7){
+        std::ostringstream o;
+        o<<playerDetails(id)<<"\nПродажа: укажите ID клуба и цену, например: 6 3000000\n";
+        o<<"Отступные: укажите сумму, например 50000000 (0 отключает условие).\n";
+        o<<"ID клубов-покупателей:\n";
+        int count=0;
+        for(const auto& c:game().clubs()){
+            if(c.id==game().teamId())continue;
+            if(count++>=12)break;
+            o<<"#"<<c.id<<" "<<c.name<<" | бюджет: "<<c.budget<<" €\n";
+        }
+        textContent(o.str());
+    }
+    else if(page==8)textContent(playerDetails(id));
     else if(page==5)textContent(game().standings(id));
     else if(page==12){const auto& inbox=game().inbox();if(id>=0&&id<int(inbox.size()))textContent(inbox[id].title+"\n\n"+inbox[id].body);}
     else if(page==14){const auto& l=game().leagues();if(id>=0&&id<int(l.size()))textContent(game().standings(id)+"\n\nНажмите «Вкл./выкл. лигу», чтобы переключить детализацию.\nКлубная лига всегда активна.");}
@@ -458,12 +476,32 @@ void trigger(int action){
         if(action==0){
             const auto* deal=game().transferDeal(id);
             if(deal&&(deal->stage==fu::DealStage::AgentOffer||deal->stage==fu::DealStage::AgentCounter)){
-                std::istringstream in(text);int wage=0,years=0;
-                if(in>>wage>>years)response=game().proposePlayerContract(id,wage,years);
-                else response="Введите зарплату в неделю и годы контракта: 55000 3";
+                if(deal->kind==1)response=game().acceptNegotiationTerms(id);
+                else{
+                    std::istringstream in(text);int wage=0,years=0;
+                    if(in>>wage>>years)response=game().proposePlayerContract(id,wage,years);
+                    else response="Введите зарплату в неделю и годы контракта: 55000 3";
+                }
             }else{
-                try{response=game().transferBid(id,std::stoi(text));}
-                catch(...){response="Введите сумму трансферного предложения в евро, например 10000000";}
+                std::istringstream in(text);
+                std::string cmd;in>>cmd;
+                if(cmd=="loan"){
+                    int fee=0,share=0,days=0;
+                    if(in>>fee>>share>>days)response=game().offerLoan(id,fee,share,days);
+                    else response="Формат аренды: loan 100000 50 180 (плата, % зарплаты, дни)";
+                }else if(cmd=="swap"){
+                    int fee=0,exchangeId=-1;
+                    if(in>>fee>>exchangeId)response=game().offerStructuredTransfer(id,fee,1,0,0,exchangeId);
+                    else response="Формат обмена: swap 5000000 123 (сумма и ID вашего игрока)";
+                }else if(cmd=="deal"){
+                    int fee=0,count=0,bonus=0,sellOn=0;
+                    if(in>>fee>>count>>bonus>>sellOn)
+                        response=game().offerStructuredTransfer(id,fee,count,bonus,sellOn);
+                    else response="Формат условий: deal 15000000 3 1000000 20";
+                }else{
+                    try{response=game().transferBid(id,std::stoi(text));}
+                    catch(...){response="Введите цену в евро или команду loan / deal / swap.";}
+                }
             }
         }
         if(action==1)response=game().scoutPlayer(id);
@@ -478,6 +516,15 @@ void trigger(int action){
             else response="Введите зарплату и срок: 30000 3";
         }
         if(action==1){go(1);return;}
+        if(action==2){
+            std::istringstream in(text);int clubId=-1,fee=0;
+            if(in>>clubId>>fee)response=game().sellPlayer(id,clubId,fee);
+            else response="Продажа: ID клуба-покупателя и сумма в евро, например 6 3000000";
+        }
+        if(action==3){
+            try{response=game().setReleaseClause(id,std::stoi(text));}
+            catch(...){response="Отступные: введите сумму в евро, например 50000000. Ноль — убрать.";}
+        }
     }else if(page==8){
         if(action==0)response=game().talk(id,text);
         if(action==1)response=game().talk(id,"Молодец! Я ценю твою работу.");
