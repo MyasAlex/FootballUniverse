@@ -299,6 +299,111 @@ std::string Game::cycleTrainingFocus(int playerId){
     }
     return status_="Выберите своего игрока.";
 }
+PitchFrame Game::pitchFrame()const{
+    PitchFrame frame;
+    const Match* match=nullptr;
+    if(hasLiveMatch()){
+        if(live_.id>=0&&live_.id<int(matches_.size()))match=&matches_[live_.id];
+    }else if(matchDue())match=upcomingMatch();
+    else if(const Match* upcoming=upcomingMatch())match=upcoming;
+    else match=lastPlayedMatchForClub();
+    if(!match)return frame;
+    frame.homeClub=match->home;
+    frame.awayClub=match->away;
+    frame.minute=hasLiveMatch()?live_.minute:(match->played?90:0);
+    frame.homeGoals=hasLiveMatch()?live_.goalsH:match->homeGoals;
+    frame.awayGoals=hasLiveMatch()?live_.goalsA:match->awayGoals;
+    const auto& home=hasLiveMatch()?live_.homeXI:starters(match->home);
+    const auto& away=hasLiveMatch()?live_.awayXI:starters(match->away);
+    // Physical positions are a presentation layer of the actual teams on the field.
+    // They are deterministic and never consume the match RNG (save/resume is stable).
+    const auto groupPosition=[&](const std::vector<int>& ids,int team){
+        const int side=team==0?1:-1;
+        int used[4]={};
+        const std::array<std::array<int,7>,4> lanes={{
+            {{350,350,350,350,350,350,350}},
+            {{95,235,465,605,350,170,525}},
+            {{120,285,440,580,350,215,500}},
+            {{170,525,350,260,440,115,585}}
+        }};
+        for(int id:ids){
+            const Player* player=findPlayer(id);
+            if(!player)continue;
+            const int group=std::clamp(positionGroup(player->position),0,3);
+            const int index=used[group]++;
+            const int baseX=group==0?72:group==1?255:group==2?490:745;
+            const int baseY=lanes[group][index%7];
+            const int motionX=((frame.minute*7+id*13+team*29)%71)-35;
+            const int motionY=((frame.minute*9+id*17+team*19)%65)-32;
+            const int adjustedX=std::clamp(baseX+side*(motionX+(frame.minute%25-12)),35,965);
+            frame.actors.push_back({id,team,team==0?adjustedX:1000-adjustedX,
+                                     std::clamp(baseY+motionY,45,655)});
+        }
+    };
+    groupPosition(home,0);
+    groupPosition(away,1);
+    if(frame.actors.empty())return frame;
+    int carrier=-1,receiver=-1;
+    std::string event;
+    if(hasLiveMatch()){
+        for(auto it=live_.events.rbegin();it!=live_.events.rend();++it){
+            if(it->minute!=frame.minute)continue;
+            const auto& str=it->text;
+            if(str.find("ГОЛ!")!=std::string::npos||str.find("пробил.")!=std::string::npos||
+               str.find("комбинация")!=std::string::npos){
+                event=str;break;
+            }
+        }
+    }
+    bool homePossesses=(frame.minute*13+frame.homeGoals*19+frame.awayGoals*7)%100<54;
+    if(hasLiveMatch()&&live_.minute>0){
+        const int chance=(live_.possessionTicksH*100)/live_.minute;
+        homePossesses=(frame.minute*13+live_.passesH/4)%100<chance;
+    }
+    if(!event.empty()){
+        if(event.rfind(clubs_[frame.homeClub].name+":",0)==0)homePossesses=true;
+        else if(event.rfind(clubs_[frame.awayClub].name+":",0)==0)homePossesses=false;
+    }
+    const int team=homePossesses?0:1;
+    std::vector<const PitchActor*> attack;
+    for(const auto& actor:frame.actors)if(actor.team==team)attack.push_back(&actor);
+    if(attack.empty())return frame;
+    const PitchActor* owner=attack[(frame.minute*7+frame.homeGoals+frame.awayGoals)%attack.size()];
+    const PitchActor* provider=nullptr;
+    if(!event.empty()){
+        for(const auto* actor:attack){
+            const Player* player=findPlayer(actor->playerId);
+            if(!player)continue;
+            const size_t pos=event.find(player->name);
+            if(pos==std::string::npos)continue;
+            if(event.find("пробил.")!=std::string::npos&&
+               event.find(player->name+" пробил.")!=std::string::npos)
+                owner=actor;
+            else if(!provider)provider=actor;
+        }
+    }
+    if(provider&&provider!=owner)receiver=owner->playerId;
+    frame.carrierId=owner->playerId;
+    frame.receiverId=receiver;
+    frame.ballFromX=provider&&provider!=owner?provider->x:owner->x;
+    frame.ballFromY=provider&&provider!=owner?provider->y:owner->y;
+    frame.ballX=owner->x;frame.ballY=owner->y;
+    frame.highlight=event;
+    if(event.find("ГОЛ!")!=std::string::npos){
+        frame.action=3;frame.ballX=homePossesses?965:35;frame.ballY=350;
+    }else if(event.find("пробил.")!=std::string::npos){
+        frame.action=2;frame.ballX=homePossesses?920:80;
+        frame.ballY=350+(owner->y-350)/3;
+    }else if(provider&&provider!=owner){
+        frame.action=1;
+    }else{
+        frame.action=0;
+        // Small change between two positions gives the ball a readable movement path.
+        frame.ballFromX=std::clamp(owner->x+(team==0?-65:65),40,960);
+        frame.ballFromY=std::clamp(owner->y+((frame.minute%3)-1)*55,40,660);
+    }
+    return frame;
+}
 void Game::initializeLineups(LiveMatch& live,const Match& match)const{
     live.homeXI=starters(match.home);live.awayXI=starters(match.away);
     live.usedHome=live.homeXI;live.usedAway=live.awayXI;
