@@ -22,12 +22,12 @@ int main(){
     fu::Game g;
     g.newCareer("Тест кубков",0,fu::Role::Sandbox,fu::Difficulty::Free,{0,1});
     assert(g.cups().size()==7);
-    assert(g.matches().size()==556);
+    assert(g.matches().size()==1096);
     assert(g.cups()[6].leagueId==-1);
     assert(g.cups()[0].leagueId==0);
     assert(g.cupsText().find("Международный кубок")!=std::string::npos);
     int leagueCount=0,nationalPrelim=0,internationalQuarters=0;
-    std::vector<int> gamesByClub(36,0);
+    std::vector<int> gamesByClub(72,0);
     for(const auto& m:g.matches()){
         assert(m.id>=0);
         assert(m.id<int(g.matches().size()));
@@ -44,7 +44,7 @@ int main(){
             assert(m.round==0&&m.day==21);
         }
     }
-    assert(leagueCount==540&&nationalPrelim==12&&internationalQuarters==4);
+    assert(leagueCount==1080&&nationalPrelim==12&&internationalQuarters==4);
     for(int games:gamesByClub)assert(games==30);
     assert(g.calendarText().find("Чемпионат")!=std::string::npos);
     // The initial 1st league match should still be the next scheduled game.
@@ -87,8 +87,8 @@ int main(){
     assert(guard<1800);
     assert(resumed.season()==2027);
     assert(resumed.trophyHistory().size()==7);
-    assert(resumed.leagueHistory().size()==6);
-    assert(resumed.archive().size()==540+6*5+7);
+    assert(resumed.leagueHistory().size()==12);
+    assert(resumed.archive().size()==1080+6*5+7);
     std::set<int> trophyIds;
     for(const auto& t:resumed.trophyHistory()){
         assert(t.season==2026);
@@ -111,7 +111,7 @@ int main(){
         internationalEntrants.insert(m.home);internationalEntrants.insert(m.away);
     }
     assert(internationalEntrants.size()==8);
-    for(const auto& h:resumed.leagueHistory())
+    for(const auto& h:resumed.leagueHistory())if(h.leagueId<6)
         assert(internationalEntrants.count(h.winner)==1);
     assert(resumed.seasonHistoryText().find("ИСТОРИЯ ПОБЕДИТЕЛЕЙ")!=std::string::npos);
     assert(resumed.scorersText().find("БОМБАРДИРЫ")!=std::string::npos);
