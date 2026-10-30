@@ -1025,7 +1025,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_4\n";
+    f<<"FUSAVE_5\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -1034,7 +1034,7 @@ std::string Game::save(const std::string& path)const{
     f<<clubs_.size()<<'\n';
     for(const auto& c:clubs_){
         f<<c.id<<' '<<c.league<<' '<<c.budget<<' '<<c.fans<<' '<<c.board<<' '<<c.prestige<<' '<<c.stadium<<' '<<c.academy<<' '<<c.facilities<<' '
-         <<c.ticket<<' '<<c.sponsorship<<' '<<c.wins<<' '<<c.draws<<' '<<c.losses<<' '<<c.gf<<' '<<c.ga<<' '<<c.points<<' '<<c.formation<<' '<<c.tactic<<' '<<c.training<<'\n';
+         <<c.ticket<<' '<<c.sponsorship<<' '<<c.wins<<' '<<c.draws<<' '<<c.losses<<' '<<c.gf<<' '<<c.ga<<' '<<c.points<<' '<<c.formation<<' '<<c.tactic<<' '<<c.training<<' '<<c.captainId<<' '<<c.viceCaptainId<<'\n';
         putString(f,c.name);putString(f,c.city);
     }
     f<<players_.size()<<'\n';
@@ -1066,14 +1066,17 @@ std::string Game::save(const std::string& path)const{
     };
     writeIds(live_.homeXI);writeIds(live_.awayXI);
     writeIds(live_.usedHome);writeIds(live_.usedAway);
+    f<<lastTeamTalkDay_<<' '<<scouts_.size()<<'\n';
+    for(const auto& r:scouts_)f<<r.playerId<<' '<<r.days<<' '<<r.ability<<' '<<r.potential<<' '<<r.shortlisted<<'\n';
     return f.good()?"Карьера сохранена: "+path:"Ошибка записи сохранения";
 }
 std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
+    const bool version5=(header=="FUSAVE_5");
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
@@ -1084,12 +1087,14 @@ std::string Game::load(const std::string& path){
     std::istringstream randomState(state);if(!(randomState>>loaded.rng_))return "Ошибка генератора мира";
     auto size=[&](size_t limit)->size_t{size_t n=0;if(!(f>>n)||n>limit)throw std::runtime_error("Некорректное число записей");return n;};
     try{
-        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.inbox_.clear();
+        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.inbox_.clear();loaded.scouts_.clear();
         for(size_t i=0,n=size(300);i<n;++i){League l;if(!(f>>l.id>>l.active)||!getString(f,l.country)||!getString(f,l.name))throw std::runtime_error("Лиги");loaded.leagues_.push_back(l);}
         for(size_t i=0,n=size(100000);i<n;++i){
             Club c;if(!(f>>c.id>>c.league>>c.budget>>c.fans>>c.board>>c.prestige>>c.stadium>>c.academy>>c.facilities
-                >>c.ticket>>c.sponsorship>>c.wins>>c.draws>>c.losses>>c.gf>>c.ga>>c.points>>c.formation>>c.tactic>>c.training)
-                ||!getString(f,c.name)||!getString(f,c.city))throw std::runtime_error("Клубы");
+                >>c.ticket>>c.sponsorship>>c.wins>>c.draws>>c.losses>>c.gf>>c.ga>>c.points>>c.formation>>c.tactic>>c.training))
+                throw std::runtime_error("Клубы");
+            if(version5&&!(f>>c.captainId>>c.viceCaptainId))throw std::runtime_error("Руководство раздевалки");
+            if(!getString(f,c.name)||!getString(f,c.city))throw std::runtime_error("Названия клубов");
             loaded.clubs_.push_back(c);
         }
         for(size_t i=0,n=size(1000000);i<n;++i){
@@ -1131,11 +1136,33 @@ std::string Game::load(const std::string& path){
             readIds(loaded.live_.homeXI);readIds(loaded.live_.awayXI);
             readIds(loaded.live_.usedHome);readIds(loaded.live_.usedAway);
         }
+        if(version5){
+            if(!(f>>loaded.lastTeamTalkDay_))throw std::runtime_error("Собрания");
+            for(size_t i=0,n=size(1000000);i<n;++i){
+                ScoutReport report;
+                if(!(f>>report.playerId>>report.days>>report.ability>>report.potential>>report.shortlisted)||
+                   report.days<0||report.days>5||report.ability<0||report.ability>100||
+                   report.potential<0||report.potential>100)
+                    throw std::runtime_error("Скаутские отчёты");
+                loaded.scouts_.push_back(report);
+            }
+        }
         if(loaded.teamId_<0||loaded.teamId_>=int(loaded.clubs_.size()))throw std::runtime_error("Ваш клуб");
         for(const auto& c:loaded.clubs_)if(c.id<0||c.id>=int(loaded.clubs_.size())||c.league<0||c.league>=int(loaded.leagues_.size()))throw std::runtime_error("Ссылки клубов");
         for(const auto& p:loaded.players_)if(p.club<0||p.club>=int(loaded.clubs_.size()))throw std::runtime_error("Ссылки игроков");
         for(const auto& m:loaded.matches_)if(m.home<0||m.home>=int(loaded.clubs_.size())||m.away<0||m.away>=int(loaded.clubs_.size())||m.id<0||m.id>=int(loaded.matches_.size()))throw std::runtime_error("Ссылки матчей");
         if(loaded.live_.id < -1||loaded.live_.id>=int(loaded.matches_.size()))throw std::runtime_error("Ссылки трансляции");
+        if(!version5)loaded.autoAssignCaptains();
+        else for(const auto& c:loaded.clubs_){
+            const Player* captain=loaded.findPlayer(c.captainId);
+            const Player* vice=loaded.findPlayer(c.viceCaptainId);
+            if((c.captainId>=0&&(!captain||captain->club!=c.id))||
+               (c.viceCaptainId>=0&&(!vice||vice->club!=c.id))||
+               (c.captainId>=0&&c.captainId==c.viceCaptainId))
+                throw std::runtime_error("Капитанский состав");
+        }
+        for(const auto& r:loaded.scouts_)
+            if(!loaded.findPlayer(r.playerId))throw std::runtime_error("Игрок из скаутского отчёта");
         if(legacy){
             for(const auto& c:loaded.clubs_)loaded.pickLineup(c.id);
             if(loaded.live_.id>=0)loaded.initializeLineups(loaded.live_,loaded.matches_[loaded.live_.id]);
