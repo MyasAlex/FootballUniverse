@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iomanip>
+#include <cmath>
 #include "Game.hpp"
 
 namespace {
@@ -44,7 +45,28 @@ HBRUSH backgroundBrush{}, surfaceBrush{}, inputBrush{};
 ULONG_PTR gdiplusToken{};
 constexpr COLORREF background=RGB(13,21,35),surface=RGB(23,35,54),primary=RGB(57,112,221),accent=RGB(67,202,179),white=RGB(233,239,247),muted=RGB(160,174,196);
 int page=-1;
-bool started=false, showPitch=false, shortlistOnly=false;
+bool started=false, showPitch=true, shortlistOnly=false;
+bool autoPlayMatch=false;
+unsigned matchSpeedIndex=1; // 0 relaxed, 1 normal, 2 fast
+ULONGLONG lastPlaybackTick=0, pitchTransitionTick=0;
+fu::PitchFrame previousPitch, currentPitch;
+constexpr UINT_PTR PITCH_TIMER=711;
+constexpr int PITCH_TICK_MS=33;
+int matchPlaybackDelay(){return matchSpeedIndex==0?1000:matchSpeedIndex==1?570:300;}
+void updatePitchFrame(bool snap=false){
+    if(!started||page!=4)return;
+    fu::PitchFrame next=game().pitchFrame();
+    const bool newFixture=next.homeClub!=currentPitch.homeClub||
+                          next.awayClub!=currentPitch.awayClub;
+    bool changed=newFixture||next.minute!=currentPitch.minute||
+         next.ballX!=currentPitch.ballX||next.ballY!=currentPitch.ballY||
+         next.actors.size()!=currentPitch.actors.size();
+    if(!changed)return;
+    previousPitch=(snap||newFixture||currentPitch.homeClub<0)?next:currentPitch;
+    currentPitch=std::move(next);
+    pitchTransitionTick=GetTickCount64();
+}
+
 int historyView=0; // 0 calendar, 1 cups, 2 winners, 3 scorers
 std::vector<int> visibleIds;
 std::vector<int> activeNavigation;
@@ -153,14 +175,21 @@ void arrange(){
         bool pitchNeeded=(page==4&&showPitch);
         int contentY=102,contentH=std::max(300,h-284);
         if(listNeeded){
-            int listWidth=std::max(255,bodyWidth*39/100);
-            move(listControl,left,contentY,listWidth,contentH);
-            int textX=left+listWidth+12,textW=bodyWidth-listWidth-12;
             if(pitchNeeded){
-                int fieldH=std::min(240,contentH*40/100);
-                move(mainText,textX,contentY,textW,contentH-fieldH-10);
-                move(pitchWindow,textX,contentY+contentH-fieldH,textW,fieldH);
-            }else move(mainText,textX,contentY,textW,contentH);
+                // Match mode: dominant animated stadium, match commentary below,
+                // selection/substitutions to the right (no text overlays).
+                const int side=std::max(205,bodyWidth*31/100);
+                const int pitchW=std::max(250,bodyWidth-side-12);
+                const int pitchH=std::max(230,contentH*70/100);
+                move(pitchWindow,left,contentY,pitchW,pitchH);
+                move(mainText,left,contentY+pitchH+8,pitchW,std::max(50,contentH-pitchH-8));
+                move(listControl,left+pitchW+12,contentY,side,contentH);
+            }else{
+                int listWidth=std::max(255,bodyWidth*39/100);
+                move(listControl,left,contentY,listWidth,contentH);
+                int textX=left+listWidth+12,textW=bodyWidth-listWidth-12;
+                move(mainText,textX,contentY,textW,contentH);
+            }
         }else if(pitchNeeded){
             int textW=bodyWidth*48/100;
             move(mainText,left,contentY,textW,contentH);
@@ -179,7 +208,7 @@ std::vector<std::wstring> buttonTexts(int p){
         case 1:return {L"В основу",L"Автосостав",L"Разговор",L"Контракт",L"Капитан"};
         case 2:return {L"Сменить схему",L"Сменить стиль",L"Прессинг",L"Темп",L"Ширина"};
         case 3:return {L"План команды",L"Фокус игрока",L"Состав",L"День +1",L"Наставник"};
-        case 4:return {L"Начать матч",L"+15 минут",L"Мгновенно",L"Сменить тактику",L"2D / текст"};
+        case 4:return {L"Начать / +15",L"▶ Авто / Пауза",L"Мгновенно",L"Сменить тактику",L"2D / текст"};
         case 5:return {L"Лига клуба",L"Другая лига",L"Кубки",L"Календарь",L"Обновить"};
         case 6:return {L"Оффер / аренда",L"Скаутировать",L"В список / убрать",L"Короткий список",L"Принять условия"};
         case 7:return {L"Контракт",L"Состав",L"Продать",L"Отступные",L"—"};
