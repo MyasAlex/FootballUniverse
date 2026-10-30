@@ -99,6 +99,17 @@ struct YouthProspect {
 struct Relationship {
     int first=0, second=0, affinity=0, lastInteractionDay=-30;
 };
+struct PitchActor {
+    int playerId=0, team=0, x=0, y=0; // Normalized 0..1000, 0..700
+};
+struct PitchFrame {
+    int minute=0, homeClub=-1, awayClub=-1;
+    int homeGoals=0, awayGoals=0;
+    int ballFromX=500, ballFromY=350, ballX=500, ballY=350;
+    int carrierId=-1, receiverId=-1, action=0; // 0 possession, 1 pass, 2 shot, 3 goal
+    std::string highlight;
+    std::vector<PitchActor> actors;
+};
 struct LiveMatch {
     int id=-1, minute=0, goalsH=0, goalsA=0, shotsH=0, shotsA=0, xgH=0, xgA=0;
     int subsH=0, subsA=0;
@@ -210,6 +221,7 @@ public:
     std::vector<int> leagueClubs(int leagueId) const;
     const Match* upcomingMatch() const;
     const LiveMatch& live() const { return live_; }
+    PitchFrame pitchFrame() const;
     bool hasLiveMatch() const { return live_.id>=0; }
     bool matchDue() const;
     void advance(int days);
