@@ -1779,7 +1779,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_7\n";
+    f<<"FUSAVE_8\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -1798,7 +1798,8 @@ std::string Game::save(const std::string& path)const{
         f<<p.morale<<' '<<p.fitness<<' '<<p.trust<<' '<<p.loyalty<<' '<<p.family<<' '<<p.wage<<' '<<p.value<<' '<<p.contractYear<<' '<<p.injured<<' '<<p.goals<<' '<<p.appearances<<' '<<p.yellow<<' '<<p.red<<' '<<p.starter<<' '<<p.trainingFocus<<' '
         <<p.releaseClause<<' '<<p.sellOnClub<<' '<<p.sellOnPct<<' '
         <<p.parentClub<<' '<<p.loanReturnDay<<' '<<p.loanWageShare<<' '
-        <<p.careerAppearances<<'\n';
+        <<p.careerAppearances<<' '<<p.developmentXP<<' '<<p.mentorId
+        <<' '<<p.developedSkills<<' '<<p.academyGraduate<<'\n';
         putString(f,p.name);putString(f,p.position);putString(f,p.personality);
     }
     f<<matches_.size()<<'\n';
@@ -1836,17 +1837,34 @@ std::string Game::save(const std::string& path)const{
     f<<payments_.size()<<'\n';
     for(const auto& p:payments_)f<<p.playerId<<' '<<p.buyerClub<<' '<<p.sellerClub
         <<' '<<p.amount<<' '<<p.dueDay<<' '<<p.triggerAppearances<<'\n';
+    f<<nextStaffId_<<' '<<nextProspectId_<<' '<<lastYouthSearchDay_<<'\n';
+    f<<staff_.size()<<'\n';
+    for(const auto& p:staff_){
+        f<<p.id<<' '<<p.club<<' '<<p.role<<' '<<p.quality
+         <<' '<<p.weeklyWage<<' '<<p.contractYear<<'\n';
+        putString(f,p.name);
+    }
+    f<<youth_.size()<<'\n';
+    for(const auto& p:youth_){
+        f<<p.id<<' '<<p.club<<' '<<p.age<<' '<<p.ability
+         <<' '<<p.potential<<'\n';
+        putString(f,p.name);putString(f,p.position);
+    }
+    f<<relations_.size()<<'\n';
+    for(const auto& p:relations_)f<<p.first<<' '<<p.second<<' '
+        <<p.affinity<<' '<<p.lastInteractionDay<<'\n';
     return f.good()?"Карьера сохранена: "+path:"Ошибка записи сохранения";
 }
 std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7");
+    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8");
     const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7");
-    const bool version7=(header=="FUSAVE_7");
+    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8");
+    const bool version8=(header=="FUSAVE_8");
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
@@ -1857,7 +1875,7 @@ std::string Game::load(const std::string& path){
     std::istringstream randomState(state);if(!(randomState>>loaded.rng_))return "Ошибка генератора мира";
     auto size=[&](size_t limit)->size_t{size_t n=0;if(!(f>>n)||n>limit)throw std::runtime_error("Некорректное число записей");return n;};
     try{
-        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.inbox_.clear();loaded.scouts_.clear();loaded.deals_.clear();loaded.payments_.clear();
+        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.inbox_.clear();loaded.scouts_.clear();loaded.deals_.clear();loaded.payments_.clear();loaded.staff_.clear();loaded.youth_.clear();loaded.relations_.clear();
         for(size_t i=0,n=size(300);i<n;++i){League l;if(!(f>>l.id>>l.active)||!getString(f,l.country)||!getString(f,l.name))throw std::runtime_error("Лиги");loaded.leagues_.push_back(l);}
         for(size_t i=0,n=size(100000);i<n;++i){
             Club c;if(!(f>>c.id>>c.league>>c.budget>>c.fans>>c.board>>c.prestige>>c.stadium>>c.academy>>c.facilities
@@ -1889,6 +1907,12 @@ std::string Game::load(const std::string& path){
                    (p.parentClub>=0&&(p.parentClub==p.club||p.loanReturnDay<loaded.totalDays_)))
                    throw std::runtime_error("Условия контракта или аренды");
             }else p.careerAppearances=p.appearances;
+            if(version8){
+                if(!(f>>p.developmentXP>>p.mentorId>>p.developedSkills>>p.academyGraduate)||
+                   p.developmentXP<0||p.developmentXP>10000||p.mentorId<-1||
+                   p.developedSkills<0||p.developedSkills>100000)
+                    throw std::runtime_error("Прогресс развития");
+            }
             if(!getString(f,p.name)||!getString(f,p.position)||!getString(f,p.personality))
                 throw std::runtime_error("Данные игрока");
             loaded.players_.push_back(std::move(p));
@@ -1976,6 +2000,55 @@ std::string Game::load(const std::string& path){
                     throw std::runtime_error("Отложенные платежи");
                 loaded.payments_.push_back(payment);
             }
+        }
+        if(version8){
+            if(!(f>>loaded.nextStaffId_>>loaded.nextProspectId_>>loaded.lastYouthSearchDay_)||
+               loaded.nextStaffId_<1||loaded.nextProspectId_<1||
+               loaded.lastYouthSearchDay_>loaded.totalDays_)
+                throw std::runtime_error("Молодёжный штаб");
+            for(size_t i=0,n=size(10000);i<n;++i){
+                StaffMember p;
+                if(!(f>>p.id>>p.club>>p.role>>p.quality>>p.weeklyWage>>p.contractYear)||
+                   p.id<1||p.id>=loaded.nextStaffId_||
+                   p.club<0||p.club>=int(loaded.clubs_.size())||
+                   p.role<0||p.role>3||p.quality<1||p.quality>100||
+                   p.weeklyWage<0||p.weeklyWage>20000000||
+                   !getString(f,p.name))
+                    throw std::runtime_error("Персонал клуба");
+                loaded.staff_.push_back(std::move(p));
+            }
+            for(size_t i=0,n=size(10000);i<n;++i){
+                YouthProspect p;
+                if(!(f>>p.id>>p.club>>p.age>>p.ability>>p.potential)||
+                   p.id<1||p.id>=loaded.nextProspectId_||
+                   p.club<0||p.club>=int(loaded.clubs_.size())||
+                   p.age<15||p.age>20||p.ability<1||p.ability>100||
+                   p.potential<1||p.potential>100||
+                   !getString(f,p.name)||!getString(f,p.position))
+                    throw std::runtime_error("Кандидаты академии");
+                loaded.youth_.push_back(std::move(p));
+            }
+            for(size_t i=0,n=size(100000);i<n;++i){
+                Relationship p;
+                if(!(f>>p.first>>p.second>>p.affinity>>p.lastInteractionDay)||
+                   p.first<1||p.second<1||p.first>=p.second||
+                   p.affinity< -100||p.affinity>100||
+                   p.lastInteractionDay>loaded.totalDays_)
+                    throw std::runtime_error("Отношения футболистов");
+                const Player* first=loaded.findPlayer(p.first);
+                const Player* second=loaded.findPlayer(p.second);
+                if(!first||!second||first->club!=second->club)
+                    throw std::runtime_error("Некорректные отношения");
+                loaded.relations_.push_back(p);
+            }
+            for(const auto& p:loaded.players_)if(p.mentorId>=0){
+                const Player* mentor=loaded.findPlayer(p.mentorId);
+                if(!mentor||mentor->club!=p.club||mentor->age<25||p.age>23||mentor->id==p.id)
+                    throw std::runtime_error("Некорректное наставничество");
+            }
+        }else{
+            loaded.seedStaff();
+            loaded.generateYouth(loaded.teamId_,4+loaded.myClub().academy/3);
         }
         if(loaded.teamId_<0||loaded.teamId_>=int(loaded.clubs_.size()))throw std::runtime_error("Ваш клуб");
         for(const auto& c:loaded.clubs_)if(c.id<0||c.id>=int(loaded.clubs_.size())||c.league<0||c.league>=int(loaded.leagues_.size()))throw std::runtime_error("Ссылки клубов");
