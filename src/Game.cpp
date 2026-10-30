@@ -1606,77 +1606,150 @@ void Game::newSeason(){
     status_="Новый сезон "+std::to_string(season_);
 }
 void Game::playMinute(LiveMatch& live,bool detailed){
-    Match& m=matches_.at(live.id);
+    const Match& m=matches_.at(live.id);
     const Club& h=clubs_[m.home],&a=clubs_[m.away];
-    const int rh=lineupStrength(live.homeXI),ra=lineupStrength(live.awayXI);
-    // Team strength, home advantage and tactics affect possession and chance frequency.
-    const int initiative=clamp(54+(rh-ra)*2+(h.tactic-1)*3-(a.tactic-1)*3,16,84);
+    for(int id:live.homeXI)if(auto* st=statFor(live,id))++st->minutes;
+    for(int id:live.awayXI)if(auto* st=statFor(live,id))++st->minutes;
+    const int strengthH=lineupStrength(live.homeXI);
+    const int strengthA=lineupStrength(live.awayXI);
+    const int initiative=std::clamp(52+(strengthH-strengthA)*2+
+        (h.tactic-a.tactic)*2+(h.pressing-a.pressing)*3+
+        (h.tempo-a.tempo),17,83);
     const bool home=random(1,100)<=initiative;
+    if(home)++live.possessionTicksH;
     const int attackingId=home?m.home:m.away;
     const Club& attacking=clubs_[attackingId];
     const Club& defending=clubs_[home?m.away:m.home];
-    const std::vector<int>& teamXI=home?live.homeXI:live.awayXI;
-    const std::vector<int>& defenceXI=home?live.awayXI:live.homeXI;
-    int urgency=attacking.tactic==2?4:attacking.tactic==3?3:attacking.tactic==0?-5:0;
-    int shotThreshold=clamp(17+urgency+(lineupStrength(teamXI)-lineupStrength(defenceXI))/5,9,31);
-    if(random(1,100)<=shotThreshold){
-        std::vector<const Player*> shooters;
-        for(int id:teamXI)if(const Player* p=findPlayer(id);p&&p->position!="GK"&&p->injured==0){
-            int weight=(positionGroup(p->position)==3?7:positionGroup(p->position)==2?4:1)+p->skill[1]/15;
-            for(int k=0;k<weight;++k)shooters.push_back(p);
+    const auto& teamXI=home?live.homeXI:live.awayXI;
+    const auto& defenceXI=home?live.awayXI:live.homeXI;
+    if(teamXI.empty())return;
+    auto takePlayer=[&](const std::vector<int>& team,bool skipGK)->const Player*{
+        std::vector<const Player*> available;
+        for(int id:team)if(const Player* p=findPlayer(id);p&&(!skipGK||p->position!="GK"))
+            available.push_back(p);
+        return available.empty()?nullptr:available[random(0,int(available.size()-1))];
+    };
+    // Every minute accounts for team possession, pass attempts and defensive challenges.
+    const int touches=std::clamp(3+(1-attacking.tempo)+random(0,3),2,8);
+    for(int i=0;i<touches;++i){
+        const Player* passer=takePlayer(teamXI,false);
+        if(!passer)break;
+        const int accuracy=std::clamp(58+passer->skill[2]/3+
+             (1-attacking.tempo)*5-(defending.pressing-1)*5,35,97);
+        const bool completed=random(1,100)<=accuracy;
+        if(auto* st=statFor(live,passer->id)){
+            ++st->passes;if(completed)++st->completedPasses;
         }
-        if(shooters.empty())return;
-        const Player* striker=shooters[random(0,int(shooters.size()-1))];
-        std::vector<const Player*> providers;
-        for(int id:teamXI)if(const Player* p=findPlayer(id);p&&p->id!=striker->id&&p->position!="GK")providers.push_back(p);
-        const Player* assister=providers.empty()?striker:providers[random(0,int(providers.size()-1))];
-        int quality=clamp(13+(striker->skill[1]-55)/3+(striker->skill[4]-55)/8+
-            (assister->skill[2]-50)/15+(lineupStrength(teamXI)-lineupStrength(defenceXI))/6+
-            (attacking.tactic==2?3:0)+(defending.tactic==0?-3:0),5,46);
-        bool goal=random(1,100)<=quality;
-        if(home){++live.shotsH;live.xgH+=quality;if(goal)++live.goalsH;}
-        else{++live.shotsA;live.xgA+=quality;if(goal)++live.goalsA;}
-        if(goal){for(auto& p:players_)if(p.id==striker->id){++p.goals;break;}}
-        if(detailed||goal){
-            std::string chain=attacking.name+": "+assister->name+" начинает комбинацию, переводит мяч на "+striker->name+". ";
-            if(goal)chain+="ГОЛ! Точный удар! Счёт "+std::to_string(live.goalsH)+":"+std::to_string(live.goalsA)+".";
-            else chain+=(random(0,1)?"Удар в створ, вратарь спасает.":"Удар с выгодной позиции — мимо ворот.");
-            live.events.push_back({live.minute,chain});
-        }
-    }else if(detailed&&random(1,100)<=13){
-        const std::vector<std::string> comments={"Перестроение атаки: команда ищет свободные зоны.",
-          "Борьба в середине поля, защитники перекрывают коридоры.",
-          "Фланговый проход, навес перехвачен соперником.",
-          "Прессинг заставляет соперника отдать мяч назад.",
-          "Длинная передача за спины защитников, положение вне игры.",
-          "Розыгрыш мяча возле штрафной; оборона сохраняет компактность."};
-        live.events.push_back({live.minute,attacking.name+": "+comments[random(0,int(comments.size()-1))]});
-    }
-    // Cards and injuries have persistent consequences. Disqualified players leave the pitch.
-    if(random(1,900)==1){
-        std::vector<int>& xi=home?live.homeXI:live.awayXI;
-        if(!xi.empty()){
-            int idx=random(0,int(xi.size()-1));int pid=xi[idx];
-            for(auto& p:players_)if(p.id==pid){
-                if(random(1,30)==1){
-                    ++p.red;xi.erase(xi.begin()+idx);
-                    live.events.push_back({live.minute,"ПРЯМАЯ КРАСНАЯ КАРТОЧКА: "+p.name+" ("+attacking.name+") удалён!"});
-                }else{
-                    ++p.yellow;
-                    live.events.push_back({live.minute,"Жёлтая карточка: "+p.name+" ("+attacking.name+")."});
-                }
-                break;
+        int& attempts=home?live.passesH:live.passesA;
+        int& successful=home?live.completedH:live.completedA;
+        ++attempts;if(completed)++successful;
+        if(!completed&&random(1,5)==1){
+            if(const Player* defender=takePlayer(defenceXI,false)){
+                if(auto* st=statFor(live,defender->id))++st->tackles;
             }
         }
     }
-    if(random(1,3900)==1){
-        const std::vector<int>& xi=home?live.homeXI:live.awayXI;
-        if(!xi.empty()){
-            int pid=xi[random(0,int(xi.size()-1))];
-            for(auto& p:players_)if(p.id==pid){
-                p.injured=random(3,19);
-                live.events.push_back({live.minute,"ТРАВМА: "+p.name+" не может играть в полную силу. Можно провести замену."});
-                break;
+    const int urgency=attacking.tactic==2?4:attacking.tactic==3?3:
+                      attacking.tactic==0?-5:0;
+    const int shotThreshold=std::clamp(17+urgency+
+         (attacking.tempo-1)*4+(attacking.width-1)*2+
+         (strengthH-strengthA)*(home?1:-1)/5,8,35);
+    if(random(1,100)<=shotThreshold){
+        std::vector<const Player*> weighted;
+        for(int id:teamXI)if(const Player* p=findPlayer(id);p&&p->position!="GK"&&p->injured==0){
+            const int count=std::max(1,(positionGroup(p->position)==3?7:
+                           positionGroup(p->position)==2?4:1)+p->skill[1]/15);
+            for(int j=0;j<count;++j)weighted.push_back(p);
+        }
+        if(!weighted.empty()){
+            const Player* scorer=weighted[random(0,int(weighted.size()-1))];
+            const Player* provider=takePlayer(teamXI,true);
+            for(int j=0;j<4&&provider&&provider->id==scorer->id;++j)
+                provider=takePlayer(teamXI,true);
+            if(provider&&provider->id==scorer->id)provider=nullptr;
+            const int quality=std::clamp(13+(scorer->skill[1]-55)/3+
+                (scorer->skill[4]-55)/8+
+                (provider?(provider->skill[2]-50)/15:0)+
+                (strengthH-strengthA)*(home?1:-1)/6+
+                (attacking.tactic==2?3:0)+(defending.tactic==0?-3:0),5,46);
+            const bool goal=random(1,100)<=quality;
+            const bool onTarget=goal||random(1,100)<=std::clamp(40+scorer->skill[1]/3,40,83);
+            if(home){
+                ++live.shotsH;live.xgH+=quality;
+                if(onTarget)++live.onTargetH;
+                if(goal)++live.goalsH;
+            }else{
+                ++live.shotsA;live.xgA+=quality;
+                if(onTarget)++live.onTargetA;
+                if(goal)++live.goalsA;
+            }
+            if(auto* st=statFor(live,scorer->id)){
+                ++st->shots;if(onTarget)++st->onTarget;
+                if(goal)++st->goals;
+            }
+            if(onTarget&&!goal){
+                for(int id:defenceXI)if(const Player* keeper=findPlayer(id);keeper&&keeper->position=="GK"){
+                    if(auto* st=statFor(live,id))++st->saves;
+                    break;
+                }
+            }
+            if(goal){
+                for(auto& p:players_)if(p.id==scorer->id){++p.goals;break;}
+                if(provider){
+                    if(auto* st=statFor(live,provider->id))++st->assists;
+                    for(auto& p:players_)if(p.id==provider->id){++p.assists;break;}
+                }
+            }else if(!onTarget&&random(1,4)==1){
+                ++(home?live.cornersH:live.cornersA);
+            }
+            if(detailed||goal){
+                const std::string from=provider?provider->name+" отдал передачу, ":"";
+                const std::string result=goal?"ГОЛ!":
+                                         onTarget?"Удар в створ — вратарь спас!":"Удар мимо!";
+                live.events.push_back({live.minute,attacking.name+": "+from+
+                     scorer->name+" пробил. "+result+
+                     (goal?" Счёт "+std::to_string(live.goalsH)+":"+
+                           std::to_string(live.goalsA)+".":"")});
+            }
+        }
+    }else if(detailed&&random(1,100)<=9){
+        live.events.push_back({live.minute,attacking.name+
+           ": комбинация в центре поля, соперник перестраивает оборону."});
+    }
+    // Fouls, cautions and injuries are generated independently of shots.
+    if(random(1,100)<=4+attacking.pressing){
+        const Player* fouler=takePlayer(teamXI,true);
+        if(fouler){
+            ++(home?live.foulsH:live.foulsA);
+            if(random(1,100)<=23){
+                MatchPlayerStat* st=statFor(live,fouler->id);
+                const bool secondYellow=st&&st->yellows>0;
+                const bool directRed=random(1,35)==1;
+                if(secondYellow||directRed){
+                    if(st)++st->reds;
+                    for(auto& p:players_)if(p.id==fouler->id){++p.red;break;}
+                    auto& eleven=home?live.homeXI:live.awayXI;
+                    eleven.erase(std::remove(eleven.begin(),eleven.end(),fouler->id),eleven.end());
+                    live.events.push_back({live.minute,"КРАСНАЯ КАРТОЧКА: "+fouler->name+" удалён."});
+                }else{
+                    if(st)++st->yellows;
+                    for(auto& p:players_)if(p.id==fouler->id){++p.yellow;break;}
+                    live.events.push_back({live.minute,"Жёлтая карточка: "+fouler->name+"."});
+                }
+            }
+        }
+    }
+    if(random(1,500)==1){
+        const Player* injured=takePlayer(teamXI,false);
+        if(injured){
+            const int injuryDays=random(3,18);
+            for(auto& p:players_)if(p.id==injured->id){p.injured=injuryDays;break;}
+            live.events.push_back({live.minute,"ТРАВМА: "+injured->name+
+                 " выбыл на "+std::to_string(injuryDays)+" дней. Доступна замена."});
+            // Interactive matches allow a manual substitute; AI can use an automatic swap.
+            if(attackingId!=teamId_){
+                auto& xi=home?live.homeXI:live.awayXI;
+                xi.erase(std::remove(xi.begin(),xi.end(),injured->id),xi.end());
             }
         }
     }
