@@ -2057,7 +2057,12 @@ std::string Game::matchText()const{
         for(int id:(m.home==teamId_?l.homeXI:l.awayXI))o<<id<<" ";
         o<<"\nВыберите запасного слева, введите ID футболиста с поля\n";
         o<<"и нажмите «Заменить» (доступно в интерактивном матче).\n\n";
-        for(const auto&e:l.events)o<<std::setw(3)<<e.minute<<"' "<<e.text<<"\n";
+        o<<"\nПОСЛЕДНИЕ СОБЫТИЯ (подробный отчёт после матча)\n";
+        const size_t start=l.events.size()>9?l.events.size()-9:0;
+        for(size_t i=start;i<l.events.size();++i){
+            const auto& event=l.events[i];
+            o<<std::setw(3)<<event.minute<<"' "<<event.text<<"\n";
+        }
     }else if(matchDue()){
         auto m=upcomingMatch();o<<"СЕГОДНЯ ИГРА\n"<<matchLabel(*m)<<"\n\n"
            <<clubs_[m->home].name<<" — "<<clubs_[m->away].name<<"\n\n";
