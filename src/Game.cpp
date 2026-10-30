@@ -236,14 +236,14 @@ void Game::pickLineup(int clubId){
     for(int group=0;group<4;++group){
         std::vector<Player*> eligible;
         for(auto& p:players_)
-            if(p.club==clubId&&positionGroup(p.position)==group&&p.injured==0)eligible.push_back(&p);
+            if(p.club==clubId&&positionGroup(p.position)==group&&p.injured==0&&p.suspension==0)eligible.push_back(&p);
         std::sort(eligible.begin(),eligible.end(),[](const Player*a,const Player*b){return playerRating(*a)>playerRating(*b);});
         for(int i=0;i<std::min(needs[group],int(eligible.size()));++i)eligible[i]->starter=true;
     }
     int n=int(starters(clubId).size());
     if(n<11){
         std::vector<Player*> available;
-        for(auto& p:players_)if(p.club==clubId&&!p.starter&&p.injured==0)available.push_back(&p);
+        for(auto& p:players_)if(p.club==clubId&&!p.starter&&p.injured==0&&p.suspension==0)available.push_back(&p);
         std::sort(available.begin(),available.end(),[](const Player*a,const Player*b){return playerRating(*a)>playerRating(*b);});
         for(auto* p:available){if(n>=11)break;p->starter=true;++n;}
     }
@@ -302,6 +302,39 @@ std::string Game::cycleTrainingFocus(int playerId){
 void Game::initializeLineups(LiveMatch& live,const Match& match)const{
     live.homeXI=starters(match.home);live.awayXI=starters(match.away);
     live.usedHome=live.homeXI;live.usedAway=live.awayXI;
+    live.playerStats.clear();
+    for(int id:live.usedHome)live.playerStats.push_back({id});
+    for(int id:live.usedAway)live.playerStats.push_back({id});
+}
+MatchPlayerStat* Game::statFor(LiveMatch& live,int playerId){
+    for(auto& stat:live.playerStats)if(stat.playerId==playerId)return &stat;
+    return nullptr;
+}
+void Game::finalizeRatings(LiveMatch& live){
+    for(auto& s:live.playerStats){
+        const int mistakes=std::max(0,s.shots-s.onTarget);
+        const int rating=58+(s.minutes>=65?3:0)+s.goals*16+s.assists*11+
+                         s.onTarget*2+s.completedPasses/12+s.tackles*2+s.saves*3-
+                         mistakes-s.yellows*6-s.reds*20;
+        s.rating10=std::clamp(rating,35,100);
+    }
+}
+void Game::applyMatchDiscipline(const Match& match){
+    const auto hasPlayed=[&](int playerId){
+        return std::any_of(match.playerStats.begin(),match.playerStats.end(),
+                           [playerId](const auto& s){return s.playerId==playerId;});
+    };
+    for(auto& p:players_)if(p.club==match.home||p.club==match.away){
+        if(p.suspension>0&&!hasPlayed(p.id))--p.suspension;
+    }
+    for(const auto& stat:match.playerStats)if(stat.reds>0){
+        for(auto& p:players_)if(p.id==stat.playerId){
+            p.suspension=std::max(p.suspension,2);
+            p.starter=false;
+            break;
+        }
+    }
+    pickLineup(match.home);pickLineup(match.away);
 }
 int Game::lineupStrength(const std::vector<int>& ids)const{
     if(ids.empty())return 25;
@@ -340,13 +373,14 @@ std::string Game::substitute(int playerOutId,int playerInId){
     const auto old=std::find(eleven.begin(),eleven.end(),playerOutId);
     const auto* incoming=findPlayer(playerInId);
     const auto* outgoing=findPlayer(playerOutId);
-    if(old==eleven.end()||!incoming||!outgoing||incoming->club!=teamId_||incoming->injured>0)
+    if(old==eleven.end()||!incoming||!outgoing||incoming->club!=teamId_||incoming->injured>0||incoming->suspension>0)
         return status_="Выберите доступного запасного и ID футболиста, который сейчас на поле.";
     if(std::find(used.begin(),used.end(),playerInId)!=used.end())
         return status_="Этот футболист уже выходил на поле; повторный выход запрещён.";
     if((incoming->position=="GK")!=(outgoing->position=="GK"))
         return status_="Вратаря можно заменить только другим вратарём.";
     *old=playerInId;used.push_back(playerInId);++subs;
+    live_.playerStats.push_back({playerInId});
     live_.events.push_back({live_.minute,"ЗАМЕНА: "+outgoing->name+" → "+incoming->name+" ("+myClub().name+")"});
     return status_="Замена выполнена: "+incoming->name+" вместо "+outgoing->name+". Осталось "+std::to_string(5-subs)+" замен.";
 }
@@ -1255,6 +1289,12 @@ std::string Game::tacticsText()const{
     o<<"ТАКТИКА КОМАНДЫ\n\n";
     o<<"Схема: "<<formations[c.formation]<<"\n";
     o<<"Стиль: "<<tactics[c.tactic]<<"\n";
+    const std::array<std::string,3> press={"Низкий блок","Средний прессинг","Высокий прессинг"};
+    const std::array<std::string,3> tempo={"Медленный","Сбалансированный","Быстрый"};
+    const std::array<std::string,3> width={"Узко","Сбалансированно","Широко"};
+    o<<"Прессинг: "<<press[c.pressing]<<"\n";
+    o<<"Темп: "<<tempo[c.tempo]<<"\n";
+    o<<"Ширина: "<<width[c.width]<<"\n";
     o<<"Тренировки: "<<trainings[c.training]<<"\n\n";
     o<<"Сила команды: "<<rating(c)<<" (с учётом доступных игроков)\n";
     o<<"Тренер: "<<staffQuality(teamId_,0)<<"/100; врач: "<<staffQuality(teamId_,1)<<"/100\n";
@@ -1792,6 +1832,21 @@ std::string Game::matchArchive()const{
     }
     if(!count&&!previous)o<<"Сыгранных матчей пока нет.\n";
     return o.str();
+}
+void Game::changePressing(){
+    if(!permissionSports()){status_="Нет полномочий менять прессинг.";return;}
+    myClub().pressing=(myClub().pressing+1)%3;
+    status_="Прессинг изменён.";
+}
+void Game::changeTempo(){
+    if(!permissionSports()){status_="Нет полномочий менять темп.";return;}
+    myClub().tempo=(myClub().tempo+1)%3;
+    status_="Темп изменён.";
+}
+void Game::changeWidth(){
+    if(!permissionSports()){status_="Нет полномочий менять ширину.";return;}
+    myClub().width=(myClub().width+1)%3;
+    status_="Ширина игры изменена.";
 }
 void Game::changeTactic(){
     if(!permissionSports()){status_="Должность не позволяет менять тактику при этой сложности.";return;}
