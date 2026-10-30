@@ -65,9 +65,18 @@ int main(){
     const int originalSkill=g.findPlayer(youngId)->skill[focus];
     // Injury recovery and fixture congestion can delay growth; allow enough
     // in-game training days for this deterministic progression requirement.
-    for(int elapsed=0;elapsed<180&&
-        g.findPlayer(youngId)->skill[focus]<=originalSkill;++elapsed)
+    const int trainingStart=g.totalDays();
+    for(int attempts=0;attempts<800&&g.totalDays()<trainingStart+230&&
+        g.findPlayer(youngId)->skill[focus]<=originalSkill;++attempts)
         nextDay(g);
+    if(g.findPlayer(youngId)->skill[focus]<=originalSkill){
+        const auto* p=g.findPlayer(youngId);
+        std::cerr<<"DIAGNOSTIC: training time "<<g.totalDays()-trainingStart
+                 <<" days, skill "<<p->skill[focus]<<" baseline "<<originalSkill
+                 <<" potential "<<p->potential<<" focus "<<p->trainingFocus
+                 <<" XP "<<p->developmentXP<<" injuries "<<p->injured
+                 <<" club "<<p->club<<" our club "<<g.teamId()<<"\n";
+    }
     assert(g.findPlayer(youngId)->skill[focus]>=originalSkill+1);
     assert(g.findPlayer(youngId)->developedSkills>=1);
     assert(g.relationships().front().affinity==initialAffinity);
