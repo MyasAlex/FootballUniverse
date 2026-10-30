@@ -124,6 +124,8 @@ std::string playerDetails(int id){
         if(game().myClub().viceCaptainId==p->id)o<<"РОЛЬ: ВИЦЕ-КАПИТАН\n";
     }
     if(p->injured)o<<"Травма: ещё "<<p->injured<<" дней\n";
+    if(p->suspension)o<<"Дисквалификация: "<<p->suspension<<" матча\n";
+    o<<"Голы / ассисты за сезон: "<<p->goals<<" / "<<p->assists<<"\n";
     return o.str();
 }
 void arrange(){
@@ -172,7 +174,7 @@ std::vector<std::wstring> buttonTexts(int p){
     switch(p){
         case 0:return {L"День +1",L"До матча (+7)",L"Сохранить",L"Загрузить",L"Матч"};
         case 1:return {L"В основу",L"Автосостав",L"Разговор",L"Контракт",L"Капитан"};
-        case 2:return {L"Сменить схему",L"Сменить стиль",L"Тренировки",L"Матч",L"Обновить"};
+        case 2:return {L"Сменить схему",L"Сменить стиль",L"Прессинг",L"Темп",L"Ширина"};
         case 3:return {L"План команды",L"Фокус игрока",L"Состав",L"День +1",L"Наставник"};
         case 4:return {L"Начать матч",L"+15 минут",L"Мгновенно",L"Сменить тактику",L"2D / текст"};
         case 5:return {L"Лига клуба",L"Другая лига",L"Кубки",L"Календарь",L"Обновить"};
@@ -183,7 +185,7 @@ std::vector<std::wstring> buttonTexts(int p){
         case 10:return {L"Стадион",L"Трениров. база",L"Академия",L"Спонсор",L"Билет +5 €"};
         case 11:return {L"Подписать игрока",L"Поиск талантов",L"Нанять штаб",L"Наставник",L"Отношения"};
         case 12:return {L"Обновить",L"Обзор",L"—",L"—",L"—"};
-        case 13:return {L"Календарь",L"Кубки",L"Победители",L"Бомбардиры",L"Матч"};
+        case 13:return {L"Календарь",L"Кубки",L"Победители",L"Бомбардиры",L"Отчёт матча"};
         case 14:return {L"Вкл./выкл. лигу",L"Новая карьера",L"Сохранить",L"Загрузить",L"Импорт CSV"};
         case 15:return {L"Подать заявку",L"Принять оффер",L"Отозвать",L"Рынок тренеров",L"Справка"};
         default:return {L"Обзор",L"—",L"—",L"—",L"—"};
@@ -384,8 +386,8 @@ void showPage(int next){
     for(int i=0;i<5;++i){
         SetWindowTextW(actions[i],labels[i].c_str());show(actions[i],labels[i]!=L"—");
     }
-    show(actions[5],page==1||page==6||page==8||page==10||page==11||(page==4&&game().hasLiveMatch()));
-    SetWindowTextW(actions[5],page==1?L"Вице-капитан":page==6?L"Отменить сделку":page==8?L"Жёсткий разговор":page==11?L"Уволить":page==4?L"Заменить":L"Билет −5 €");
+    show(actions[5],page==1||page==2||page==6||page==8||page==10||page==11||(page==4&&game().hasLiveMatch()));
+    SetWindowTextW(actions[5],page==1?L"Вице-капитан":page==6?L"Отменить сделку":page==8?L"Жёсткий разговор":page==11?L"Уволить":page==2?L"Матч":page==4?L"Заменить":L"Билет −5 €");
     if(page==6)SetWindowTextW(actions[3],shortlistOnly?L"Все игроки":L"Короткий список");
     SetWindowTextW(titleText,navLabels[page].c_str());
     std::wstring sub=wide(game().myClub().name)+L"   •   "+wide(game().dateString())+L"   •   Сезон "+std::to_wstring(game().season())+L"/"+std::to_wstring((game().season()+1)%100);
@@ -418,7 +420,8 @@ void showPage(int next){
             if(historyView==0)textContent(game().calendarText());
             else if(historyView==1)textContent(game().cupsText());
             else if(historyView==2)textContent(game().seasonHistoryText());
-            else textContent(game().scorersText());
+            else if(historyView==3)textContent(game().scorersText());
+            else textContent(game().latestMatchReport());
             break;
         case 15:detailForSelected();break;
     }
@@ -485,8 +488,10 @@ void trigger(int action){
     }else if(page==2){
         if(action==0)game().changeFormation();
         if(action==1)game().changeTactic();
-        if(action==2){go(3);return;}
-        if(action==3){go(4);return;}
+        if(action==2)game().changePressing();
+        if(action==3)game().changeTempo();
+        if(action==4)game().changeWidth();
+        if(action==5){go(4);return;}
     }else if(page==3){
         if(action==0)game().changeTraining();
         if(action==1)response=game().cycleTrainingFocus(id);
@@ -606,8 +611,7 @@ void trigger(int action){
         }
     }else if(page==12){if(action==1){go(0);return;}}
     else if(page==13){
-        if(action>=0&&action<=3)historyView=action;
-        if(action==4){go(4);return;}
+        if(action>=0&&action<=4)historyView=action;
     }
     else if(page==14){
         if(action==0)game().toggleLeague(id);
