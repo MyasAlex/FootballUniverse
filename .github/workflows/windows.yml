@@ -35,17 +35,50 @@ jobs:
           start "" "FootballUniverse.exe"
           '@ | Set-Content "$folder/PLAY.bat" -Encoding Ascii
           @'
-          Football Universe 0.3.1 - Windows x64
+          Football Universe 0.3.2 - Windows x64
           Run PLAY.bat or FootballUniverse.exe.
           C++ and Visual Studio are NOT required to run.
           Save files (career.fus) remain in the game folder if started through PLAY.bat.
-          This is an early prototype. Some Windows features are unverified.
+          This is an early prototype. Windows GUI launch is checked in CI.
           '@ | Set-Content "$folder/READ_FIRST.txt" -Encoding UTF8
-          Compress-Archive -Path "$folder/*" -DestinationPath 'dist/FootballUniverse_Windows_x64.zip' -Force
+          @'
+          @echo off
+          cd /d "%~dp0"
+          echo Checking Football Universe startup...
+          if not exist "FootballUniverse.exe" (
+            echo ERROR: FootballUniverse.exe is missing in this folder.
+            pause
+            exit /b 1
+          )
+          "FootballUniverse.exe"
+          echo Exit code: %ERRORLEVEL%
+          echo If the game failed to open, send a screenshot of this window.
+          pause
+          '@ | Set-Content "$folder/DIAGNOSE.bat" -Encoding Ascii
+      - name: Smoke test the Windows desktop game
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = (Resolve-Path 'dist/FootballUniverse').Path
+          $exe = Join-Path $folder 'FootballUniverse.exe'
+          $proc = Start-Process -FilePath $exe -WorkingDirectory $folder -PassThru
+          try {
+            $opened = $false
+            for ($i = 0; $i -lt 25; $i++) {
+              Start-Sleep -Milliseconds 400
+              $proc.Refresh()
+              if ($proc.HasExited) { throw "Game exited during startup with code $($proc.ExitCode)" }
+              if ($proc.MainWindowHandle -ne 0) { $opened = $true; break }
+            }
+            if (-not $opened) { throw 'Game did not open a main window within 10 seconds' }
+            Write-Host "Desktop GUI launched successfully, HWND: $($proc.MainWindowHandle)"
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
       - name: Downloadable Windows ZIP
         uses: actions/upload-artifact@v4
         with:
           name: FootballUniverse-Windows-EXE
-          path: dist/FootballUniverse_Windows_x64.zip
+          path: dist/FootballUniverse/*
           if-no-files-found: error
           retention-days: 30
