@@ -620,7 +620,7 @@ void trigger(int action){
         if(action==1)response=game().acceptJobOffer();
         if(action==2)response=game().withdrawApplication();
         if(action==3)response=game().jobMarketText(id);
-        if(action==4)response=game().helpText();
+        if(action==4){textContent(game().helpText());return;}
     }
     int old=lastListIndex;
     showPage(page);
