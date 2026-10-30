@@ -283,7 +283,11 @@ LRESULT CALLBACK logoProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
 void showPage(int next);
 void detailForSelected(){
     int id=selectedId();
-    if(id<0){textContent("Выберите пункт из списка.");return;}
+    if(id<0){
+        if(page==11)textContent(game().academyText());
+        else textContent("Выберите пункт из списка.");
+        return;
+    }
     if(page==1)textContent(playerDetails(id)+"\n\n"+game().lineupText());
     else if(page==3)textContent(game().tacticsText()+"\n"+playerDetails(id)+"\n"+
                                  game().developmentText(id)+"\n"+
@@ -396,7 +400,6 @@ void showPage(int next){
         case 4:textContent(game().matchText());break;
         case 9:textContent("БОЛЕЛЬЩИКИ\n\nТекущая поддержка: "+std::to_string(game().myClub().fans)+"/100\n\nНапишите своё обращение в поле ниже.\nРеакции имеют последствия для доверия, посещаемости и отношений внутри клуба.\n\nТекст понимается через локальные правила (без облачного ИИ).");break;
         case 10:textContent(game().financesText());break;
-        case 11:textContent(game().academyText());break;
         case 13:textContent(game().matchArchive());break;
         case 15:textContent(game().helpText());break;
     }
