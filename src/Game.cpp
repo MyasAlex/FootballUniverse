@@ -2741,6 +2741,45 @@ std::string Game::load(const std::string& path){
             // has not passed. Otherwise start them next season.
             if(loaded.day_<20)loaded.createCups();
         }
+        if(version10){
+            if(loaded.leagues_.size()!=12||loaded.clubs_.size()!=72)
+                throw std::runtime_error("Неверный состав дивизионов");
+            for(size_t i=0,n=size(100000);i<n;++i){
+                LeagueMovement m;
+                if(!(f>>m.season>>m.systemId>>m.promotedClub>>m.relegatedClub)||
+                   m.season<2026||m.season>=loaded.season_||
+                   m.systemId<0||m.systemId>5||
+                   m.promotedClub<0||m.promotedClub>=int(loaded.clubs_.size())||
+                   m.relegatedClub<0||m.relegatedClub>=int(loaded.clubs_.size())||
+                   m.promotedClub==m.relegatedClub)
+                    throw std::runtime_error("История повышений и вылетов");
+                loaded.movements_.push_back(m);
+            }
+            for(size_t i=0,n=size(10000);i<n;++i){
+                CoachRecord coach;
+                if(!(f>>coach.clubId>>coach.ability>>coach.jobSecurity
+                      >>coach.contractYear>>coach.hiredDay>>coach.vacant)||
+                   coach.clubId!=int(i)||
+                   coach.ability<0||coach.ability>100||
+                   coach.jobSecurity<0||coach.jobSecurity>100||
+                   coach.hiredDay<0||coach.hiredDay>loaded.totalDays_||
+                   !getString(f,coach.name))
+                    throw std::runtime_error("Рынок тренеров");
+                loaded.coaches_.push_back(coach);
+            }
+            if(loaded.coaches_.size()!=loaded.clubs_.size()||
+               !(f>>loaded.reputation_>>loaded.job_.clubId
+                   >>loaded.job_.submittedDay>>loaded.job_.responseDay
+                   >>loaded.job_.expiresDay>>loaded.job_.stage
+                   >>loaded.job_.proposedSalary)||
+               loaded.reputation_<5||loaded.reputation_>100||
+               loaded.job_.stage<-1||loaded.job_.stage>4||
+               loaded.job_.clubId<-1||loaded.job_.clubId>=int(loaded.clubs_.size())||
+               (loaded.job_.stage>=0&&loaded.job_.clubId<0))
+                throw std::runtime_error("Карьера тренера");
+            if(loaded.coaches_[loaded.teamId_].vacant)
+                throw std::runtime_error("Ваш клуб не может быть без тренера");
+        }
         if(loaded.teamId_<0||loaded.teamId_>=int(loaded.clubs_.size()))throw std::runtime_error("Ваш клуб");
         for(const auto& c:loaded.clubs_)if(c.id<0||c.id>=int(loaded.clubs_.size())||c.league<0||c.league>=int(loaded.leagues_.size()))throw std::runtime_error("Ссылки клубов");
         for(const auto& p:loaded.players_)if(p.club<0||p.club>=int(loaded.clubs_.size()))throw std::runtime_error("Ссылки игроков");
@@ -2767,6 +2806,11 @@ std::string Game::load(const std::string& path){
                     if(loaded.deals_[j].playerId==deal.playerId&&int(loaded.deals_[j].stage)<=4)
                         throw std::runtime_error("Повторяющиеся активные переговоры");
             }
+        }
+        if(!version10){
+            loaded.appendSecondDivisions(true);
+            loaded.seedCoaches();
+            // Migration preserves all existing clubs, fixtures, scores and player IDs.
         }
         if(legacy){
             for(const auto& c:loaded.clubs_)loaded.pickLineup(c.id);
