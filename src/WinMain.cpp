@@ -224,42 +224,161 @@ std::vector<std::wstring> buttonTexts(int p){
     }
 }
 void drawPitch(HDC dc,RECT area){
-    HBRUSH grass=CreateSolidBrush(RGB(14,75,62));FillRect(dc,&area,grass);DeleteObject(grass);
-    HPEN pen=CreatePen(PS_SOLID,2,RGB(183,227,208));auto oldPen=SelectObject(dc,pen);auto oldBrush=SelectObject(dc,GetStockObject(HOLLOW_BRUSH));
-    RECT field={16,16,area.right-16,area.bottom-16};
-    Rectangle(dc,field.left,field.top,field.right,field.bottom);
-    int mid=(field.left+field.right)/2, cy=(field.top+field.bottom)/2;
-    MoveToEx(dc,mid,field.top,nullptr);LineTo(dc,mid,field.bottom);
-    Ellipse(dc,mid-43,cy-43,mid+43,cy+43);
-    Rectangle(dc,field.left,cy-72,field.left+58,cy+72);
-    Rectangle(dc,field.right-58,cy-72,field.right,cy+72);
-    SelectObject(dc,oldBrush);SelectObject(dc,oldPen);DeleteObject(pen);
-    const int xs[11]={4,17,17,17,17,36,36,36,56,56,68};
-    const int ys[11]={50,16,38,62,84,22,50,78,22,78,50};
-    int seed=game().hasLiveMatch()?game().live().minute:30;
-    for(int team=0;team<2;++team){
-        HBRUSH jersey=CreateSolidBrush(team?RGB(247,120,106):RGB(69,160,241));
-        size_t count=11;
-        if(game().hasLiveMatch())count=team?game().live().awayXI.size():game().live().homeXI.size();
-        for(size_t i=0;i<std::min<size_t>(11,count);++i){
-            int x=team?(100-xs[i]):xs[i];
-            int y=ys[i];
-            int offset=((seed+4*i+team*2)%11)-5;
-            if(i>0)x=std::clamp(x+offset,5,95);
-            int px=field.left+(field.right-field.left)*x/100;
-            int py=field.top+(field.bottom-field.top)*y/100;
-            HBRUSH old=HBRUSH(SelectObject(dc,jersey));Ellipse(dc,px-7,py-7,px+7,py+7);SelectObject(dc,old);
-        }
-        DeleteObject(jersey);
+    const int w=std::max(1,int(area.right-area.left));
+    const int h=std::max(1,int(area.bottom-area.top));
+    Gdiplus::Bitmap back(w,h,PixelFormat32bppARGB);
+    Gdiplus::Graphics g(&back);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    g.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAlias);
+    Gdiplus::SolidBrush midnight(Gdiplus::Color(255,10,24,30));
+    g.FillRectangle(&midnight,0,0,w,h);
+    const Gdiplus::RectF pitch(17.f,53.f,float(std::max(30,w-34)),
+                             float(std::max(40,h-88)));
+    const float cw=pitch.Width,ch=pitch.Height;
+    for(int stripe=0;stripe<10;++stripe){
+        Gdiplus::SolidBrush green(stripe%2?
+            Gdiplus::Color(255,22,91,68):Gdiplus::Color(255,19,104,76));
+        g.FillRectangle(&green,pitch.X+cw*stripe/10.f,pitch.Y,cw/10.f+1.f,ch);
     }
-    HBRUSH ball=CreateSolidBrush(RGB(255,244,150));HBRUSH old=HBRUSH(SelectObject(dc,ball));
-    int bx=field.left+(field.right-field.left)*(20+(seed*7)%60)/100;
-    int by=field.top+(field.bottom-field.top)*(20+(seed*3)%60)/100;
-    Ellipse(dc,bx-4,by-4,bx+4,by+4);SelectObject(dc,old);DeleteObject(ball);
-    SetBkMode(dc,TRANSPARENT);SetTextColor(dc,RGB(220,243,227));
-    SelectObject(dc,smallFont);
-    const wchar_t* hint=L"Условная схема позиций (не физическая симуляция)";
-    TextOutW(dc,22,area.bottom-23,hint,int(wcslen(hint)));
+    Gdiplus::Pen marks(Gdiplus::Color(230,214,242,223),1.5f);
+    Gdiplus::Pen thin(Gdiplus::Color(180,213,240,223),1.f);
+    g.DrawRectangle(&marks,pitch);
+    g.DrawLine(&marks,pitch.X+cw/2,pitch.Y,pitch.X+cw/2,pitch.Y+ch);
+    g.DrawEllipse(&marks,pitch.X+cw/2-std::min(40.f,ch*.2f),
+        pitch.Y+ch/2-std::min(40.f,ch*.2f),
+        std::min(80.f,ch*.4f),std::min(80.f,ch*.4f));
+    g.DrawEllipse(&marks,pitch.X+cw/2-2,pitch.Y+ch/2-2,4.f,4.f);
+    for(int team=0;team<2;++team){
+        const float edge=team==0?pitch.X:pitch.X+cw;
+        const float boxW=cw*.14f,smallW=cw*.055f;
+        const float bx=team==0?edge:edge-boxW;
+        const float sx=team==0?edge:edge-smallW;
+        g.DrawRectangle(&thin,bx,pitch.Y+ch*.21f,boxW,ch*.58f);
+        g.DrawRectangle(&thin,sx,pitch.Y+ch*.35f,smallW,ch*.30f);
+        g.DrawEllipse(&thin,(team==0?bx+boxW-2:bx-17),
+            pitch.Y+ch/2-16,19.f,32.f);
+        Gdiplus::SolidBrush whiteNet(Gdiplus::Color(255,229,237,243));
+        const float gx=team==0?pitch.X-7:pitch.X+cw;
+        g.FillRectangle(&whiteNet,gx,pitch.Y+ch*.43f,7.f,ch*.14f);
+    }
+    Gdiplus::FontFamily fontFamily(L"Segoe UI");
+    Gdiplus::Font title(&fontFamily,16.f,Gdiplus::FontStyleBold,Gdiplus::UnitPixel);
+    Gdiplus::Font normal(&fontFamily,12.f,Gdiplus::FontStyleRegular,Gdiplus::UnitPixel);
+    Gdiplus::Font number(&fontFamily,10.f,Gdiplus::FontStyleBold,Gdiplus::UnitPixel);
+    Gdiplus::SolidBrush ink(Gdiplus::Color(255,238,246,247));
+    Gdiplus::SolidBrush hint(Gdiplus::Color(255,173,203,202));
+    Gdiplus::SolidBrush gold(Gdiplus::Color(255,253,207,85));
+    const fu::PitchFrame& frame=currentPitch;
+    std::wstring left=L"ДОМА",right=L"ГОСТИ";
+    if(frame.homeClub>=0){
+        if(const auto* club=game().findClub(frame.homeClub))left=wide(club->name);
+        if(const auto* club=game().findClub(frame.awayClub))right=wide(club->name);
+    }
+    if(left.size()>19)left.resize(19);
+    if(right.size()>19)right.resize(19);
+    const std::wstring score=std::to_wstring(frame.homeGoals)+L" : "+
+                             std::to_wstring(frame.awayGoals);
+    const std::wstring clock=game().hasLiveMatch()?
+        std::to_wstring(frame.minute)+L"'  LIVE":
+        (frame.minute==90?L"90' FIN":L"ПРЕВЬЮ");
+    g.DrawString(left.c_str(),-1,&title,Gdiplus::PointF(16.f,8.f),&ink);
+    const float scoreX=std::max(140.f,float(w)/2-31.f);
+    g.DrawString(score.c_str(),-1,&title,Gdiplus::PointF(scoreX,6.f),&gold);
+    Gdiplus::RectF rightRect(float(w)-190.f,8.f,173.f,24.f);
+    Gdiplus::StringFormat rightAlign;
+    rightAlign.SetAlignment(Gdiplus::StringAlignmentFar);
+    g.DrawString(right.c_str(),-1,&title,rightRect,&rightAlign,&ink);
+    g.DrawString(clock.c_str(),-1,&normal,Gdiplus::PointF(18.f,31.f),&hint);
+    const wchar_t* controls=L"▶ Авто / Пауза     +15 минут     2D / текст";
+    g.DrawString(controls,-1,&normal,
+        Gdiplus::PointF(17.f,float(h)-27.f),&hint);
+    auto px=[&](float x){return pitch.X+cw*x/1000.f;};
+    auto py=[&](float y){return pitch.Y+ch*y/700.f;};
+    const ULONGLONG now=GetTickCount64();
+    const float factor=std::clamp(float(now-pitchTransitionTick)/
+                float(std::max(200,matchPlaybackDelay()-60)),0.f,1.f);
+    const float eased=factor*factor*(3.f-2.f*factor);
+    for(const auto& actor:frame.actors){
+        float ax=float(actor.x),ay=float(actor.y);
+        if(previousPitch.homeClub==frame.homeClub&&
+           previousPitch.awayClub==frame.awayClub){
+            for(const auto& old:previousPitch.actors)
+                if(old.playerId==actor.playerId){
+                    ax=float(old.x)+(actor.x-old.x)*eased;
+                    ay=float(old.y)+(actor.y-old.y)*eased;
+                    break;
+                }
+        }
+        const float x=px(ax),y=py(ay);
+        const float radius=std::clamp(ch*.025f,7.f,11.f);
+        const Gdiplus::Color base=actor.team==0?
+             Gdiplus::Color(255,69,161,248):
+             Gdiplus::Color(255,247,109,92);
+        Gdiplus::SolidBrush shade(Gdiplus::Color(110,0,0,0));
+        g.FillEllipse(&shade,x-radius+2.f,y-radius+3.f,2*radius,2*radius);
+        if(actor.playerId==frame.carrierId){
+            Gdiplus::Pen selected(Gdiplus::Color(230,252,206,82),2.4f);
+            g.DrawEllipse(&selected,x-radius-4.f,y-radius-4.f,
+                         2*radius+8.f,2*radius+8.f);
+        }
+        Gdiplus::SolidBrush kit(base);
+        Gdiplus::Pen border(Gdiplus::Color(255,232,246,248),1.3f);
+        g.FillEllipse(&kit,x-radius,y-radius,2*radius,2*radius);
+        g.DrawEllipse(&border,x-radius,y-radius,2*radius,2*radius);
+        const std::wstring shirt=std::to_wstring(actor.playerId%99+1);
+        Gdiplus::RectF nr(x-radius,y-radius+1.f,2*radius,2*radius-2.f);
+        Gdiplus::StringFormat middle;middle.SetAlignment(Gdiplus::StringAlignmentCenter);
+        middle.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        g.DrawString(shirt.c_str(),-1,&number,nr,&middle,&ink);
+    }
+    if(frame.homeClub>=0){
+        // The ball is connected to the actual carrier/pass/shot event at this minute.
+        // Interpolation is visual only: it never changes the underlying match result.
+        const float fromX=px(float(frame.ballFromX));
+        const float fromY=py(float(frame.ballFromY));
+        const float endX=px(float(frame.ballX));
+        const float endY=py(float(frame.ballY));
+        const float ballX=fromX+(endX-fromX)*eased;
+        const float ballY=fromY+(endY-fromY)*eased;
+        if(frame.action==1||frame.action==2||frame.action==3){
+            Gdiplus::Pen trail(Gdiplus::Color(180,255,229,129),2.f);
+            trail.SetDashStyle(Gdiplus::DashStyleDash);
+            g.DrawLine(&trail,fromX,fromY,endX,endY);
+        }
+        Gdiplus::SolidBrush glow(Gdiplus::Color(85,255,229,113));
+        Gdiplus::SolidBrush ball(Gdiplus::Color(255,255,254,239));
+        Gdiplus::Pen outline(Gdiplus::Color(255,20,37,35),1.5f);
+        g.FillEllipse(&glow,ballX-9.f,ballY-9.f,18.f,18.f);
+        g.FillEllipse(&ball,ballX-4.6f,ballY-4.6f,9.2f,9.2f);
+        g.DrawEllipse(&outline,ballX-4.6f,ballY-4.6f,9.2f,9.2f);
+    }
+    if(frame.action==3&&game().hasLiveMatch()){
+        Gdiplus::SolidBrush celebration(Gdiplus::Color(215,13,32,38));
+        const float bw=std::min(cw*.42f,210.f), bh=48.f;
+        g.FillRectangle(&celebration,pitch.X+(cw-bw)/2,
+                         pitch.Y+(ch-bh)/2,bw,bh);
+        Gdiplus::Font shout(&fontFamily,29.f,Gdiplus::FontStyleBold,
+                            Gdiplus::UnitPixel);
+        Gdiplus::RectF label(pitch.X+(cw-bw)/2,pitch.Y+(ch-bh)/2,bw,bh);
+        Gdiplus::StringFormat centered;
+        centered.SetAlignment(Gdiplus::StringAlignmentCenter);
+        centered.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+        g.DrawString(L"ГОЛ!",-1,&shout,label,&centered,&gold);
+    }
+    if(!frame.highlight.empty()){
+        const auto text=wide(frame.highlight);
+        const float panelHeight=23.f;
+        const float bottom=pitch.Y+ch-panelHeight-3.f;
+        Gdiplus::SolidBrush overlay(Gdiplus::Color(205,5,31,28));
+        g.FillRectangle(&overlay,pitch.X+3.f,bottom,cw-6.f,panelHeight);
+        Gdiplus::RectF box(pitch.X+10.f,bottom+2.f,cw-20.f,panelHeight-3.f);
+        Gdiplus::StringFormat clip;
+        clip.SetTrimming(Gdiplus::StringTrimmingEllipsisCharacter);
+        clip.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap);
+        g.DrawString(text.c_str(),-1,&normal,box,&clip,&ink);
+    }
+    Gdiplus::Graphics screen(dc);
+    screen.DrawImage(&back,0,0);
 }
 LRESULT CALLBACK pitchProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     if(msg==WM_ERASEBKGND)return 1;
