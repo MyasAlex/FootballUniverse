@@ -9,8 +9,9 @@
 #include <string>
 
 static void nextDay(fu::Game& game){
+    // Finish a fixture due today, then actually advance the calendar by a day.
     if(game.matchDue())assert(game.instantMatch());
-    else game.advance(1);
+    game.advance(1);
 }
 int main(){
     fu::Game g;
