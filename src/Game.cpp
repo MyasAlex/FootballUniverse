@@ -59,7 +59,7 @@ int playerRating(const Player& p){
 Game::Game():rng_(20261030U){ newCareer("Менеджер", 0, Role::Coach, Difficulty::Realistic,{0,1}); }
 int Game::random(int lo,int hi){return std::uniform_int_distribution<int>(lo,hi)(rng_);}
 void Game::seedWorld(){
-    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();payments_.clear();lastTeamTalkDay_=-30;live_={};
+    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;live_={};
     const std::vector<std::tuple<std::string,std::string,std::vector<std::string>>> definitions={
       {"Англия","Премьер-лига",{"Арсенал","Ливерпуль","Манчестер Сити","Челси","Манчестер Юнайтед","Тоттенхэм"}},
       {"Испания","Ла Лига",{"Реал Мадрид","Барселона","Атлетико","Атлетик Бильбао","Вильярреал","Реал Сосьедад"}},
@@ -233,7 +233,15 @@ int Game::lineupStrength(const std::vector<int>& ids)const{
         if(std::find(ids.begin(),ids.end(),c.captainId)!=ids.end())leadership+=2;
         if(std::find(ids.begin(),ids.end(),c.viceCaptainId)!=ids.end())leadership+=1;
     }
-    return clamp(total/n-(11-n)*4+leadership,5,99);
+    int teamwork=0;
+    for(const auto& relation:relations_){
+        if(std::find(ids.begin(),ids.end(),relation.first)==ids.end()||
+           std::find(ids.begin(),ids.end(),relation.second)==ids.end())continue;
+        if(relation.affinity>=20)++teamwork;
+        else if(relation.affinity<=-20)--teamwork;
+    }
+    teamwork=std::clamp(teamwork,-5,5);
+    return clamp(total/n-(11-n)*4+leadership+teamwork,5,99);
 }
 std::string Game::substitute(int playerOutId,int playerInId){
     if(!permissionSports())return status_="Нет полномочий проводить замены.";
@@ -552,7 +560,10 @@ void Game::newCareer(std::string manager,int clubId,Role role,Difficulty difficu
     teamId_=clubId;
     for(auto& l:leagues_)l.active=std::find(activeLeagues.begin(),activeLeagues.end(),l.id)!=activeLeagues.end();
     leagues_[clubs_[teamId_].league].active=true;
-    createSquads();autoAssignCaptains();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();
+    createSquads();
+    seedStaff();
+    generateYouth(teamId_,4+myClub().academy/3);
+    autoAssignCaptains();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();
     addMessage("Добро пожаловать в клуб","Сезон 2026/27 начался. Режим карьеры: собственная футбольная вселенная. База клубов демонстрационная, составы процедурные. Активные лиги симулируются подробно.");
     addMessage("Первые задачи","Изучите состав, настройте тактику, поговорите с футболистами и подготовьтесь к первому туру. Следующий день — на главной странице.");
     status_="Новая карьера создана";
@@ -789,6 +800,10 @@ std::string Game::teamTalk(int tone){
         p.trust=clamp(p.trust+(change>0?2:change<0?-3:0));
         if(change>0)++positive;
         else if(change<0)++negative;
+    }
+    for(auto& relation:relations_)if(const Player* p=findPlayer(relation.first)){
+        if(p->club!=teamId_)continue;
+        relation.affinity=clamp(relation.affinity+(tone==2?-2:2),-100,100);
     }
     const std::string kind=tone==0?"Мотивационная встреча":tone==1?"Похвала команде":"Жёсткий разговор";
     status_=kind+": поддержали "+std::to_string(positive)+", недовольны "+std::to_string(negative)+" игроков.";
@@ -1676,21 +1691,12 @@ std::string Game::spendMoney(const std::string& project){
     return status_;
 }
 std::string Game::recruitYouth(){
-    if(!permissionSports()){status_="Нет полномочий академии.";return status_;}
-    const int cost=350000;
-    if(!canFinance(cost)){status_="На набор молодёжи требуется "+money(cost);return status_;}
-    myClub().budget-=cost;
-    Player p;p.id=nextPlayerId_++;p.club=teamId_;p.age=random(16,18);
-    p.name=firstNames[random(0,int(firstNames.size()-1))]+" "+lastNames[random(0,int(lastNames.size()-1))];
-    p.position=positions[random(0,int(positions.size()-1))];p.personality=character[random(0,int(character.size()-1))];
-    int base=clamp(31+myClub().academy*3+random(-12,13),20,75);
-    for(int& skill:p.skill)skill=clamp(base+random(-14,14));
-    p.potential=clamp(base+myClub().academy*2+random(11,31));
-    p.wage=1500;p.value=120000+base*18000;p.contractYear=season_+4;
-    players_.push_back(p);
-    status_="Из академии приглашён "+p.name+", "+std::to_string(p.age)+" лет, потенциал "+std::to_string(p.potential)+"/100.";
-    addMessage("Молодой талант",status_);
-    return status_;
+    int bestId=-1,best=-1;
+    for(const auto& prospect:youth_)if(prospect.club==teamId_&&prospect.potential>best){
+        best=prospect.potential;bestId=prospect.id;
+    }
+    if(bestId<0)return status_="В академии пока нет кандидатов. Запустите новый просмотр.";
+    return signYouthProspect(bestId);
 }
 std::string Game::negotiateSponsor(){
     if(!permissionBusiness()){status_="Спонсорские переговоры доступны руководству.";return status_;}
