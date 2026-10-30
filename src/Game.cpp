@@ -412,6 +412,8 @@ std::string Game::homeText()const{
     o<<"Роль: "<<(role_==Role::Coach?"Главный тренер":role_==Role::Director?"Спортивный директор":role_==Role::Owner?"Владелец":role_==Role::President?"Президент":"Песочница")<<"\n";
     o<<"Сложность: "<<(difficulty_==Difficulty::Easy?"Лёгкая":difficulty_==Difficulty::Realistic?"Реализм":difficulty_==Difficulty::Hard?"Сложная":"Свободная песочница")<<"\n\n";
     o<<"Бюджет: "<<money(myClub().budget)<<"\n";
+    int liveDeals=0;for(const auto& d:deals_)if(int(d.stage)<=4)++liveDeals;
+    o<<"Активные трансферные переговоры: "<<liveDeals<<"\n";
     o<<"Доверие фанатов: "<<pct(myClub().fans)<<"\n";
     o<<"Доверие руководства: "<<pct(myClub().board)<<"\n";
     o<<"Подготовка команды: "<<tactics[myClub().tactic]<<" / "<<formations[myClub().formation]<<"\n\n";
@@ -466,14 +468,18 @@ std::string Game::newsText()const{
     return o.str();
 }
 std::string Game::helpText()const{
-    return "FOOTBALL UNIVERSE 0.4 / ПРОТОТИП\n\n"
+    return "FOOTBALL UNIVERSE 0.5 / ПРОТОТИП\n\n"
     "Это самостоятельная C++-игра с текстовым и 2D-отображением матча.\n"
     "Создайте карьеру, выберите должность, сложность, клуб и активные лиги.\n"
     "Меню слева открывает все игровые системы.\n\n"
     "Состав: выберите запасного, впишите ID игрока основы, нажмите «В основу».\n"
     "Капитан и вице-капитан: выделите своего игрока и назначьте во вкладке «Состав».\n"
     "Разговоры: проводите командные собрания с моральными последствиями раз в 7 дней.\n"
-    "Трансферы: назначайте наблюдение за игроком и пополняйте короткий список.\n"
+    "Трансферы: наблюдение скаута, короткий список и многоэтапные переговоры.\n"
+    "Введите цену (евро) и нажмите «Предложить». Клуб ответит на следующий день.\n"
+    "При согласии клуба отправьте агенту зарплату и срок: 55000 4.\n"
+    "Можно принять встречные условия или отменить переговоры.\n"
+    "Письма о переговорах приходят в почту; ответы занимают игровые дни.\n"
     "Тренировки: выберите игрока и переключайте индивидуальный фокус.\n"
     "Матч: в интерактивном режиме выберите запасного, введите ID выходящего игрока,\n"
     "нажмите «Заменить». До 5 замен, повторный выход запрещён.\n\n"
@@ -513,6 +519,7 @@ std::string Game::teamTalk(int tone){
     return status_;
 }
 void Game::dailyTick(){
+    processTransferNegotiations();
     for(auto& report:scouts_)if(report.days<5){
         ++report.days;
         if(report.days==5){
@@ -615,6 +622,10 @@ void Game::newSeason(){
             p.potential=clamp(base+random(15,36));p.wage=1500+base*100;p.value=60000+base*12000;p.contractYear=season_+4;
             players_.push_back(p);
         }
+    }
+    for(auto& d:deals_){
+        if(int(d.stage)>4)continue;
+        if(!findPlayer(d.playerId))d.stage=DealStage::Cancelled;
     }
     for(const auto& m:matches_)if(m.played)archive_.push_back(m);
     autoAssignCaptains();
@@ -1186,7 +1197,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_5\n";
+    f<<"FUSAVE_6\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -1229,15 +1240,22 @@ std::string Game::save(const std::string& path)const{
     writeIds(live_.usedHome);writeIds(live_.usedAway);
     f<<lastTeamTalkDay_<<' '<<scouts_.size()<<'\n';
     for(const auto& r:scouts_)f<<r.playerId<<' '<<r.days<<' '<<r.ability<<' '<<r.potential<<' '<<r.shortlisted<<'\n';
+    f<<deals_.size()<<'\n';
+    for(const auto& d:deals_)
+        f<<d.playerId<<' '<<d.sellerClub<<' '<<d.fee<<' '<<d.askingFee<<' '
+         <<d.wage<<' '<<d.askingWage<<' '<<d.years<<' '<<d.submittedDay<<' '
+         <<d.replyDay<<' '<<d.expiryDay<<' '<<d.rivalClub<<' '<<d.rounds<<' '
+         <<int(d.stage)<<'\n';
     return f.good()?"Карьера сохранена: "+path:"Ошибка записи сохранения";
 }
 std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version5=(header=="FUSAVE_5");
+    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6");
+    const bool version6=(header=="FUSAVE_6");
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
@@ -1248,7 +1266,7 @@ std::string Game::load(const std::string& path){
     std::istringstream randomState(state);if(!(randomState>>loaded.rng_))return "Ошибка генератора мира";
     auto size=[&](size_t limit)->size_t{size_t n=0;if(!(f>>n)||n>limit)throw std::runtime_error("Некорректное число записей");return n;};
     try{
-        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.inbox_.clear();loaded.scouts_.clear();
+        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.inbox_.clear();loaded.scouts_.clear();loaded.deals_.clear();
         for(size_t i=0,n=size(300);i<n;++i){League l;if(!(f>>l.id>>l.active)||!getString(f,l.country)||!getString(f,l.name))throw std::runtime_error("Лиги");loaded.leagues_.push_back(l);}
         for(size_t i=0,n=size(100000);i<n;++i){
             Club c;if(!(f>>c.id>>c.league>>c.budget>>c.fans>>c.board>>c.prestige>>c.stadium>>c.academy>>c.facilities
@@ -1308,6 +1326,25 @@ std::string Game::load(const std::string& path){
                 loaded.scouts_.push_back(report);
             }
         }
+        if(version6){
+            for(size_t i=0,n=size(100000);i<n;++i){
+                TransferDeal d;
+                int stage=0;
+                if(!(f>>d.playerId>>d.sellerClub>>d.fee>>d.askingFee
+                    >>d.wage>>d.askingWage>>d.years>>d.submittedDay
+                    >>d.replyDay>>d.expiryDay>>d.rivalClub>>d.rounds>>stage)||
+                    stage<0||stage>8||d.fee<0||d.fee>500000000||
+                    d.askingFee<0||d.askingFee>500000000||
+                    d.wage<0||d.wage>20000000||d.askingWage<0||d.askingWage>20000000||
+                    d.years<1||d.years>7||d.rounds<0||d.rounds>30||
+                    d.submittedDay<0||d.replyDay<0||d.expiryDay<d.submittedDay||
+                    d.sellerClub<0||d.sellerClub>=int(loaded.clubs_.size())||
+                    d.rivalClub>=int(loaded.clubs_.size())||d.rivalClub < -1)
+                    throw std::runtime_error("Трансферные переговоры");
+                d.stage=DealStage(stage);
+                loaded.deals_.push_back(d);
+            }
+        }
         if(loaded.teamId_<0||loaded.teamId_>=int(loaded.clubs_.size()))throw std::runtime_error("Ваш клуб");
         for(const auto& c:loaded.clubs_)if(c.id<0||c.id>=int(loaded.clubs_.size())||c.league<0||c.league>=int(loaded.leagues_.size()))throw std::runtime_error("Ссылки клубов");
         for(const auto& p:loaded.players_)if(p.club<0||p.club>=int(loaded.clubs_.size()))throw std::runtime_error("Ссылки игроков");
@@ -1324,6 +1361,17 @@ std::string Game::load(const std::string& path){
         }
         for(const auto& r:loaded.scouts_)
             if(!loaded.findPlayer(r.playerId))throw std::runtime_error("Игрок из скаутского отчёта");
+        for(size_t i=0;i<loaded.deals_.size();++i){
+            const auto& deal=loaded.deals_[i];
+            const Player* p=loaded.findPlayer(deal.playerId);
+            if(int(deal.stage)<=4&&(!p||p->club!=deal.sellerClub))
+                throw std::runtime_error("Активная сделка с недоступным игроком");
+            if(int(deal.stage)<=4){
+                for(size_t j=0;j<i;++j)
+                    if(loaded.deals_[j].playerId==deal.playerId&&int(loaded.deals_[j].stage)<=4)
+                        throw std::runtime_error("Повторяющиеся активные переговоры");
+            }
+        }
         if(legacy){
             for(const auto& c:loaded.clubs_)loaded.pickLineup(c.id);
             if(loaded.live_.id>=0)loaded.initializeLineups(loaded.live_,loaded.matches_[loaded.live_.id]);
