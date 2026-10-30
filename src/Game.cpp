@@ -468,7 +468,7 @@ std::string Game::newsText()const{
     return o.str();
 }
 std::string Game::helpText()const{
-    return "FOOTBALL UNIVERSE 0.5 / ПРОТОТИП\n\n"
+    return "FOOTBALL UNIVERSE 0.6 / ПРОТОТИП\n\n"
     "Это самостоятельная C++-игра с текстовым и 2D-отображением матча.\n"
     "Создайте карьеру, выберите должность, сложность, клуб и активные лиги.\n"
     "Меню слева открывает все игровые системы.\n\n"
@@ -480,6 +480,11 @@ std::string Game::helpText()const{
     "При согласии клуба отправьте агенту зарплату и срок: 55000 4.\n"
     "Можно принять встречные условия или отменить переговоры.\n"
     "Письма о переговорах приходят в почту; ответы занимают игровые дни.\n"
+    "Усложнённый оффер: deal 15000000 3 1000000 20 (цена, платежи, бонус, %).\n"
+    "Обмен: swap 5000000 123 (денежная доплата и ID вашего футболиста).\n"
+    "Аренда: loan 100000 50 180 (плата, доля зарплаты %, срок в днях).\n"
+    "Контракты: продать игрока клубу по ID, выставить отступные (в песочнице — любому).\n"
+    "Оплата рассрочек идёт раз в 30 дней, бонус начисляется после 10 матчей.\n"
     "Тренировки: выберите игрока и переключайте индивидуальный фокус.\n"
     "Матч: в интерактивном режиме выберите запасного, введите ID выходящего игрока,\n"
     "нажмите «Заменить». До 5 замен, повторный выход запрещён.\n\n"
@@ -955,7 +960,6 @@ std::string Game::offerStructuredTransfer(int playerId,int fee,int installments,
             current->installments=installments;current->appearanceBonus=appearanceBonus;
             current->sellOnPct=sellOnPct;current->exchangePlayerId=exchangePlayerId;
         }
-        current->askingFee=std::max(1,current->askingFee-(exchanged?exchanged->value*70/100:0));
         current->stage=DealStage::ClubReview;
         current->replyDay=totalDays_+1;
         ++current->rounds;
@@ -1198,7 +1202,8 @@ std::string Game::setReleaseClause(int playerId,int amount){
     if(!permissionSports())return status_="Нет полномочий для изменения условий контракта.";
     if(hasLiveMatch())return status_="Изменения контракта недоступны во время матча.";
     Player* p=nullptr;for(auto& candidate:players_)if(candidate.id==playerId)p=&candidate;
-    if(!p||p->club!=teamId_||p->parentClub>=0)return status_="Выберите собственного футболиста.";
+    if(!p||((p->club!=teamId_)&&difficulty_!=Difficulty::Free)||p->parentClub>=0)
+        return status_="В обычной карьере изменять отступные можно только своим игрокам.";
     if(amount<0||amount>500000000)return status_="Отступные: от 0 до 500 млн €. Ноль отключает условие.";
     if(amount>0&&amount<p->value)return status_="Отступные должны быть не ниже рыночной стоимости игрока.";
     // Simple sandbox contract amendment. A negotiated extension is still handled separately.
