@@ -7,11 +7,11 @@
 #include <string>
 int main(){
     fu::Game g;
-    assert(g.clubs().size()==36);
-    assert(g.leagues().size()==6);
-    assert(g.players().size()==36*24);
+    assert(g.clubs().size()==72);
+    assert(g.leagues().size()==12);
+    assert(g.players().size()==72*24);
     // 540 championship fixtures plus preliminary domestic and international cup games.
-    assert(g.matches().size()==6*90+6*2+4);
+    assert(g.matches().size()==12*90+6*2+4);
     assert(g.cups().size()==7);
     for(int lid=0;lid<6;++lid){
         int count=0;int gamesForTeam=0;
