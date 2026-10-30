@@ -2804,14 +2804,15 @@ std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10");
-    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10");
-    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10");
-    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10");
-    const bool version9=(header=="FUSAVE_9"||header=="FUSAVE_10");
-    const bool version10=(header=="FUSAVE_10");
+    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
+    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
+    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
+    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
+    const bool version9=(header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
+    const bool version10=(header=="FUSAVE_10"||header=="FUSAVE_11");
+    const bool version11=(header=="FUSAVE_11");
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
@@ -2840,6 +2841,9 @@ std::string Game::load(const std::string& path){
                 >>c.ticket>>c.sponsorship>>c.wins>>c.draws>>c.losses>>c.gf>>c.ga>>c.points>>c.formation>>c.tactic>>c.training))
                 throw std::runtime_error("Клубы");
             if(version5&&!(f>>c.captainId>>c.viceCaptainId))throw std::runtime_error("Руководство раздевалки");
+            if(version11&&(!(f>>c.pressing>>c.tempo>>c.width)||
+                c.pressing<0||c.pressing>2||c.tempo<0||c.tempo>2||c.width<0||c.width>2))
+                throw std::runtime_error("Инструкции тренера");
             if(!getString(f,c.name)||!getString(f,c.city))throw std::runtime_error("Названия клубов");
             loaded.clubs_.push_back(c);
         }
@@ -2871,10 +2875,48 @@ std::string Game::load(const std::string& path){
                    p.developedSkills<0||p.developedSkills>100000)
                     throw std::runtime_error("Прогресс развития");
             }
+            if(version11&&(!(f>>p.assists>>p.suspension)||
+                p.assists<0||p.assists>500||p.suspension<0||p.suspension>10))
+                throw std::runtime_error("Статистика и дисквалификации игроков");
             if(!getString(f,p.name)||!getString(f,p.position)||!getString(f,p.personality))
                 throw std::runtime_error("Данные игрока");
             loaded.players_.push_back(std::move(p));
         }
+        auto readStats=[&](std::vector<MatchPlayerStat>& stats){
+            for(size_t i=0,n=size(50);i<n;++i){
+                MatchPlayerStat st;
+                if(!(f>>st.playerId>>st.minutes>>st.shots>>st.onTarget
+                   >>st.passes>>st.completedPasses>>st.tackles>>st.saves
+                   >>st.goals>>st.assists>>st.yellows>>st.reds>>st.rating10)||
+                   st.playerId<=0||st.minutes<0||st.minutes>90||
+                   st.shots<0||st.shots>90||st.onTarget<0||st.onTarget>st.shots||
+                   st.passes<0||st.passes>1000||
+                   st.completedPasses<0||st.completedPasses>st.passes||
+                   st.tackles<0||st.tackles>200||st.saves<0||st.saves>90||
+                   st.goals<0||st.goals>90||st.assists<0||st.assists>90||
+                   st.yellows<0||st.yellows>2||st.reds<0||st.reds>1||
+                   st.rating10<35||st.rating10>100)
+                    throw std::runtime_error("Индивидуальная статистика матча");
+                for(const auto& previous:stats)
+                    if(previous.playerId==st.playerId)
+                        throw std::runtime_error("Повторяющийся футболист в отчёте");
+                stats.push_back(st);
+            }
+        };
+        auto readMatchTotals=[&](Match& m){
+            if(!(f>>m.possessionH>>m.onTargetH>>m.onTargetA>>
+                 m.passesH>>m.passesA>>m.completedH>>m.completedA>>
+                 m.foulsH>>m.foulsA>>m.cornersH>>m.cornersA)||
+               m.possessionH<0||m.possessionH>100||
+               m.onTargetH<0||m.onTargetA<0||
+               m.onTargetH>m.shotsH||m.onTargetA>m.shotsA||
+               m.passesH<0||m.passesA<0||
+               m.completedH<0||m.completedA<0||
+               m.completedH>m.passesH||m.completedA>m.passesA||
+               m.foulsH<0||m.foulsA<0||
+               m.cornersH<0||m.cornersA<0)
+               throw std::runtime_error("Командная статистика матча");
+        };
         for(size_t i=0,n=size(1000000);i<n;++i){
             Match m;size_t count=0;
             if(!(f>>m.id>>m.season>>m.day>>m.home>>m.away>>m.homeGoals>>m.awayGoals>>m.played>>m.shotsH>>m.shotsA>>m.xgH>>m.xgA>>count)||count>2000)throw std::runtime_error("Матчи");
@@ -2884,7 +2926,9 @@ std::string Game::load(const std::string& path){
                (m.competition<0&&(m.penaltiesH>=0||m.penaltiesA>=0))||
                (m.competition>=0&&m.played&&m.homeGoals==m.awayGoals&&m.penaltiesH==m.penaltiesA)))
                 throw std::runtime_error("Данные кубкового матча");
+            if(version11)readMatchTotals(m);
             for(size_t j=0;j<count;++j){Event e;if(!(f>>e.minute)||!getString(f,e.text))throw std::runtime_error("События матча");m.events.push_back(std::move(e));}
+            if(version11)readStats(m.playerStats);
             loaded.matches_.push_back(std::move(m));
         }
         for(size_t i=0,n=size(1000000);i<n;++i){
@@ -2895,7 +2939,9 @@ std::string Game::load(const std::string& path){
                ((m.penaltiesH<0)!=(m.penaltiesA<0))||
                (m.competition<0&&(m.penaltiesH>=0||m.penaltiesA>=0))))
                 throw std::runtime_error("Кубковый архив");
+            if(version11)readMatchTotals(m);
             for(size_t j=0;j<count;++j){Event e;if(!(f>>e.minute)||!getString(f,e.text))throw std::runtime_error("Архив матчей");m.events.push_back(std::move(e));}
+            if(version11)readStats(m.playerStats);
             loaded.archive_.push_back(std::move(m));
         }
         for(size_t i=0,n=size(100000);i<n;++i){Message m;if(!(f>>m.day)||!getString(f,m.title)||!getString(f,m.body))throw std::runtime_error("Почта");loaded.inbox_.push_back(std::move(m));}
@@ -2911,6 +2957,25 @@ std::string Game::load(const std::string& path){
             };
             readIds(loaded.live_.homeXI);readIds(loaded.live_.awayXI);
             readIds(loaded.live_.usedHome);readIds(loaded.live_.usedAway);
+            if(version11){
+                auto& live=loaded.live_;
+                if(!(f>>live.possessionTicksH>>live.onTargetH>>live.onTargetA
+                    >>live.passesH>>live.passesA>>live.completedH>>live.completedA
+                    >>live.foulsH>>live.foulsA>>live.cornersH>>live.cornersA)||
+                   live.possessionTicksH<0||live.possessionTicksH>live.minute||
+                   live.onTargetH<0||live.onTargetA<0||
+                   live.onTargetH>live.shotsH||live.onTargetA>live.shotsA||
+                   live.passesH<0||live.passesA<0||
+                   live.completedH<0||live.completedA<0||
+                   live.completedH>live.passesH||live.completedA>live.passesA||
+                   live.foulsH<0||live.foulsA<0||
+                   live.cornersH<0||live.cornersA<0)
+                    throw std::runtime_error("Промежуточные показатели матча");
+                readStats(live.playerStats);
+            }else if(loaded.live_.id>=0){
+                for(int id:loaded.live_.usedHome)loaded.live_.playerStats.push_back({id});
+                for(int id:loaded.live_.usedAway)loaded.live_.playerStats.push_back({id});
+            }
         }
         if(version5){
             if(!(f>>loaded.lastTeamTalkDay_))throw std::runtime_error("Собрания");
