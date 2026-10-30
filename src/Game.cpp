@@ -59,7 +59,7 @@ int playerRating(const Player& p){
 Game::Game():rng_(20261030U){ newCareer("Менеджер", 0, Role::Coach, Difficulty::Realistic,{0,1}); }
 int Game::random(int lo,int hi){return std::uniform_int_distribution<int>(lo,hi)(rng_);}
 void Game::seedWorld(){
-    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();archive_.clear();inbox_.clear();live_={};
+    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();archive_.clear();inbox_.clear();scouts_.clear();lastTeamTalkDay_=-30;live_={};
     const std::vector<std::tuple<std::string,std::string,std::vector<std::string>>> definitions={
       {"Англия","Премьер-лига",{"Арсенал","Ливерпуль","Манчестер Сити","Челси","Манчестер Юнайтед","Тоттенхэм"}},
       {"Испания","Ла Лига",{"Реал Мадрид","Барселона","Атлетико","Атлетик Бильбао","Вильярреал","Реал Сосьедад"}},
@@ -104,6 +104,39 @@ void Game::createSquads(){
             players_.push_back(std::move(p));
         }
     }
+}
+void Game::autoAssignCaptains(){
+    for(auto& club:clubs_){
+        auto valid=[&](int id){const Player* p=findPlayer(id);return p&&p->club==club.id;};
+        std::vector<const Player*> options;
+        for(const auto& p:players_)if(p.club==club.id)options.push_back(&p);
+        std::sort(options.begin(),options.end(),[](const Player*a,const Player*b){
+            return a->loyalty+a->skill[8]+std::min(a->age,35)>
+                   b->loyalty+b->skill[8]+std::min(b->age,35);
+        });
+        if(!valid(club.captainId))club.captainId=options.empty()?-1:options.front()->id;
+        if(!valid(club.viceCaptainId)||club.viceCaptainId==club.captainId){
+            club.viceCaptainId=-1;
+            for(const auto* p:options)if(p->id!=club.captainId){club.viceCaptainId=p->id;break;}
+        }
+    }
+}
+std::string Game::setCaptain(int playerId,bool vice){
+    if(!permissionSports())return status_="Нет полномочий назначать капитана.";
+    if(hasLiveMatch())return status_="Во время матча назначение капитана недоступно.";
+    Player* chosen=nullptr;
+    for(auto& p:players_)if(p.id==playerId&&p.club==teamId_)chosen=&p;
+    if(!chosen)return status_="Выберите футболиста своего клуба.";
+    Club& c=myClub();
+    int& slot=vice?c.viceCaptainId:c.captainId;
+    if(slot==playerId)return status_="Этот игрок уже назначен на выбранную роль.";
+    if((vice&&c.captainId==playerId)||(!vice&&c.viceCaptainId==playerId))
+        return status_="Капитан и вице-капитан должны быть разными футболистами.";
+    for(auto& p:players_)if(p.id==slot&&p.club==teamId_)p.morale=clamp(p.morale-3);
+    slot=playerId;chosen->morale=clamp(chosen->morale+5);chosen->loyalty=clamp(chosen->loyalty+3);
+    status_=chosen->name+(vice?" назначен вице-капитаном.":" назначен капитаном.");
+    addMessage("Решение по капитанской повязке",status_);
+    return status_;
 }
 std::vector<int> Game::starters(int clubId)const{
     std::vector<int> ids;
@@ -192,7 +225,15 @@ int Game::lineupStrength(const std::vector<int>& ids)const{
         if(p->injured)r=std::max(5,r-30);
         total+=r;++n;
     }
-    return n?clamp(total/n-(11-n)*4,5,99):25;
+    if(!n)return 25;
+    int leadership=0;
+    const Player* lead=findPlayer(ids.front());
+    if(lead&&lead->club>=0&&lead->club<int(clubs_.size())){
+        const auto& c=clubs_[lead->club];
+        if(std::find(ids.begin(),ids.end(),c.captainId)!=ids.end())leadership+=2;
+        if(std::find(ids.begin(),ids.end(),c.viceCaptainId)!=ids.end())leadership+=1;
+    }
+    return clamp(total/n-(11-n)*4+leadership,5,99);
 }
 std::string Game::substitute(int playerOutId,int playerInId){
     if(!permissionSports())return status_="Нет полномочий проводить замены.";
@@ -257,7 +298,7 @@ void Game::newCareer(std::string manager,int clubId,Role role,Difficulty difficu
     teamId_=clubId;
     for(auto& l:leagues_)l.active=std::find(activeLeagues.begin(),activeLeagues.end(),l.id)!=activeLeagues.end();
     leagues_[clubs_[teamId_].league].active=true;
-    createSquads();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();
+    createSquads();autoAssignCaptains();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();
     addMessage("Добро пожаловать в клуб","Сезон 2026/27 начался. Режим карьеры: собственная футбольная вселенная. База клубов демонстрационная, составы процедурные. Активные лиги симулируются подробно.");
     addMessage("Первые задачи","Изучите состав, настройте тактику, поговорите с футболистами и подготовьтесь к первому туру. Следующий день — на главной странице.");
     status_="Новая карьера создана";
@@ -266,10 +307,56 @@ const Club& Game::myClub()const{return clubs_.at(teamId_);} Club& Game::myClub()
 const Player* Game::findPlayer(int id)const{for(const auto& p:players_)if(p.id==id)return &p;return nullptr;}
 const Club* Game::findClub(int id)const{return id>=0&&id<int(clubs_.size())?&clubs_[id]:nullptr;}
 std::vector<int> Game::ownPlayers() const {std::vector<int> r;for(const auto& p:players_)if(p.club==teamId_)r.push_back(p.id);return r;}
-std::vector<int> Game::transferCandidates() const {
+const ScoutReport* Game::scoutReport(int playerId)const{
+    for(const auto& r:scouts_)if(r.playerId==playerId)return &r;
+    return nullptr;
+}
+std::string Game::scoutText(int playerId)const{
+    const Player* p=findPlayer(playerId);
+    if(!p)return "Футболист не найден.";
+    const ScoutReport* r=scoutReport(playerId);
+    if(!r)return "Скаут не назначен. Нажмите «Скаутировать».";
+    std::ostringstream o;
+    o<<"СКАУТСКИЙ ОТЧЁТ: "<<p->name<<"\n";
+    o<<"Короткий список: "<<(r->shortlisted?"ДА":"нет")<<"\n";
+    if(r->days<5)o<<"Наблюдение: "<<r->days<<"/5 дней. Ожидается доклад специалиста.\n";
+    else o<<"Наблюдение завершено.\nОценка скаута: "<<r->ability
+          <<"/100\nОценка потенциала: "<<r->potential<<"/100\n";
+    o<<"Стоимость: "<<money(p->value)<<"\n";
+    return o.str();
+}
+std::string Game::scoutPlayer(int playerId){
+    if(!permissionSports())return status_="Нет полномочий отправлять скаутов.";
+    if(hasLiveMatch())return status_="Сначала завершите матч.";
+    const Player* p=findPlayer(playerId);
+    if(!p||p->club==teamId_)return status_="Выберите футболиста другого клуба.";
+    for(auto& r:scouts_)if(r.playerId==playerId){
+        if(r.days>=5)return status_="Отчёт по "+p->name+" уже готов.";
+        return status_="Скаут уже наблюдает за "+p->name+".";
+    }
+    scouts_.push_back({playerId,0,0,0,false});
+    return status_="Скаут отправлен изучать "+p->name+". Отчёт появится через 5 игровых дней.";
+}
+std::string Game::toggleShortlist(int playerId){
+    if(!permissionSports())return status_="Нет полномочий на работу с трансферным списком.";
+    const Player* p=findPlayer(playerId);
+    if(!p||p->club==teamId_)return status_="Выберите футболиста другого клуба.";
+    for(auto& r:scouts_)if(r.playerId==playerId){
+        r.shortlisted=!r.shortlisted;
+        return status_=p->name+(r.shortlisted?" добавлен в короткий список.":" удалён из короткого списка.");
+    }
+    scouts_.push_back({playerId,0,0,0,true});
+    return status_=p->name+" добавлен в короткий список (наблюдение началось).";
+}
+std::vector<int> Game::transferCandidates(bool shortlistOnly) const {
     std::vector<int> r;
-    for(const auto& p:players_)if(p.club!=teamId_&&leagues_[clubs_[p.club].league].active)r.push_back(p.id);
-    std::sort(r.begin(),r.end(),[this](int a,int b){return findPlayer(a)->value>findPlayer(b)->value;});
+    for(const auto& p:players_)if(p.club!=teamId_&&leagues_[clubs_[p.club].league].active&&(!shortlistOnly||(scoutReport(p.id)&&scoutReport(p.id)->shortlisted)))r.push_back(p.id);
+    std::sort(r.begin(),r.end(),[this](int a,int b){
+        bool sa=scoutReport(a)&&scoutReport(a)->shortlisted;
+        bool sb=scoutReport(b)&&scoutReport(b)->shortlisted;
+        if(sa!=sb)return sa;
+        return findPlayer(a)->value>findPlayer(b)->value;
+    });
     if(r.size()>100)r.resize(100);
     return r;
 }
