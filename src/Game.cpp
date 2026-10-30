@@ -2051,7 +2051,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_8\n";
+    f<<"FUSAVE_9\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -2077,13 +2077,13 @@ std::string Game::save(const std::string& path)const{
     f<<matches_.size()<<'\n';
     for(const auto& m:matches_){
         f<<m.id<<' '<<m.season<<' '<<m.day<<' '<<m.home<<' '<<m.away<<' '<<m.homeGoals<<' '<<m.awayGoals<<' '<<m.played<<' '
-         <<m.shotsH<<' '<<m.shotsA<<' '<<m.xgH<<' '<<m.xgA<<' '<<m.events.size()<<'\n';
+         <<m.shotsH<<' '<<m.shotsA<<' '<<m.xgH<<' '<<m.xgA<<' '<<m.events.size()<<' '<<m.competition<<' '<<m.round<<' '<<m.penaltiesH<<' '<<m.penaltiesA<<'\n';
         for(const auto& e:m.events){f<<e.minute<<'\n';putString(f,e.text);}
     }
     f<<archive_.size()<<'\n';
     for(const auto& m:archive_){
         f<<m.id<<' '<<m.season<<' '<<m.day<<' '<<m.home<<' '<<m.away<<' '<<m.homeGoals<<' '<<m.awayGoals<<' '<<m.played<<' '
-         <<m.shotsH<<' '<<m.shotsA<<' '<<m.xgH<<' '<<m.xgA<<' '<<m.events.size()<<'\n';
+         <<m.shotsH<<' '<<m.shotsA<<' '<<m.xgH<<' '<<m.xgA<<' '<<m.events.size()<<' '<<m.competition<<' '<<m.round<<' '<<m.penaltiesH<<' '<<m.penaltiesA<<'\n';
         for(const auto& e:m.events){f<<e.minute<<'\n';putString(f,e.text);}
     }
     f<<inbox_.size()<<'\n';
@@ -2125,18 +2125,31 @@ std::string Game::save(const std::string& path)const{
     f<<relations_.size()<<'\n';
     for(const auto& p:relations_)f<<p.first<<' '<<p.second<<' '
         <<p.affinity<<' '<<p.lastInteractionDay<<'\n';
+    f<<cups_.size()<<'\n';
+    for(const auto& cup:cups_){
+        f<<cup.id<<' '<<cup.season<<' '<<cup.leagueId<<' '<<cup.round<<' '
+         <<cup.champion<<' '<<cup.byeA<<' '<<cup.byeB<<'\n';
+        putString(f,cup.name);
+    }
+    f<<trophies_.size()<<'\n';
+    for(const auto& t:trophies_)
+        f<<t.season<<' '<<t.cupId<<' '<<t.winner<<' '<<t.runnerUp<<'\n';
+    f<<leagueHistory_.size()<<'\n';
+    for(const auto& r:leagueHistory_)
+        f<<r.season<<' '<<r.leagueId<<' '<<r.winner<<' '<<r.runnerUp<<' '<<r.points<<'\n';
     return f.good()?"Карьера сохранена: "+path:"Ошибка записи сохранения";
 }
 std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8");
+    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9");
     const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8");
     const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8");
-    const bool version8=(header=="FUSAVE_8");
+    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9");
+    const bool version9=(header=="FUSAVE_9");
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
@@ -2147,7 +2160,7 @@ std::string Game::load(const std::string& path){
     std::istringstream randomState(state);if(!(randomState>>loaded.rng_))return "Ошибка генератора мира";
     auto size=[&](size_t limit)->size_t{size_t n=0;if(!(f>>n)||n>limit)throw std::runtime_error("Некорректное число записей");return n;};
     try{
-        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.inbox_.clear();loaded.scouts_.clear();loaded.deals_.clear();loaded.payments_.clear();loaded.staff_.clear();loaded.youth_.clear();loaded.relations_.clear();
+        loaded.leagues_.clear();loaded.clubs_.clear();loaded.players_.clear();loaded.matches_.clear();loaded.archive_.clear();loaded.cups_.clear();loaded.trophies_.clear();loaded.leagueHistory_.clear();loaded.inbox_.clear();loaded.scouts_.clear();loaded.deals_.clear();loaded.payments_.clear();loaded.staff_.clear();loaded.youth_.clear();loaded.relations_.clear();
         for(size_t i=0,n=size(300);i<n;++i){League l;if(!(f>>l.id>>l.active)||!getString(f,l.country)||!getString(f,l.name))throw std::runtime_error("Лиги");loaded.leagues_.push_back(l);}
         for(size_t i=0,n=size(100000);i<n;++i){
             Club c;if(!(f>>c.id>>c.league>>c.budget>>c.fans>>c.board>>c.prestige>>c.stadium>>c.academy>>c.facilities
@@ -2192,12 +2205,23 @@ std::string Game::load(const std::string& path){
         for(size_t i=0,n=size(1000000);i<n;++i){
             Match m;size_t count=0;
             if(!(f>>m.id>>m.season>>m.day>>m.home>>m.away>>m.homeGoals>>m.awayGoals>>m.played>>m.shotsH>>m.shotsA>>m.xgH>>m.xgA>>count)||count>2000)throw std::runtime_error("Матчи");
+            if(version9&&(!(f>>m.competition>>m.round>>m.penaltiesH>>m.penaltiesA)||
+               m.competition < -1||m.competition>6||m.round<0||m.round>2||
+               ((m.penaltiesH<0)!=(m.penaltiesA<0))||
+               (m.competition<0&&(m.penaltiesH>=0||m.penaltiesA>=0))||
+               (m.competition>=0&&m.played&&m.homeGoals==m.awayGoals&&m.penaltiesH==m.penaltiesA)))
+                throw std::runtime_error("Данные кубкового матча");
             for(size_t j=0;j<count;++j){Event e;if(!(f>>e.minute)||!getString(f,e.text))throw std::runtime_error("События матча");m.events.push_back(std::move(e));}
             loaded.matches_.push_back(std::move(m));
         }
         for(size_t i=0,n=size(1000000);i<n;++i){
             Match m;size_t count=0;
             if(!(f>>m.id>>m.season>>m.day>>m.home>>m.away>>m.homeGoals>>m.awayGoals>>m.played>>m.shotsH>>m.shotsA>>m.xgH>>m.xgA>>count)||count>2000)throw std::runtime_error("Архив");
+            if(version9&&(!(f>>m.competition>>m.round>>m.penaltiesH>>m.penaltiesA)||
+               m.competition < -1||m.competition>6||m.round<0||m.round>2||
+               ((m.penaltiesH<0)!=(m.penaltiesA<0))||
+               (m.competition<0&&(m.penaltiesH>=0||m.penaltiesA>=0))))
+                throw std::runtime_error("Кубковый архив");
             for(size_t j=0;j<count;++j){Event e;if(!(f>>e.minute)||!getString(f,e.text))throw std::runtime_error("Архив матчей");m.events.push_back(std::move(e));}
             loaded.archive_.push_back(std::move(m));
         }
@@ -2321,6 +2345,48 @@ std::string Game::load(const std::string& path){
         }else{
             loaded.seedStaff();
             loaded.generateYouth(loaded.teamId_,4+loaded.myClub().academy/3);
+        }
+        if(version9){
+            for(size_t i=0,n=size(20);i<n;++i){
+                CupCompetition c;
+                if(!(f>>c.id>>c.season>>c.leagueId>>c.round>>c.champion>>c.byeA>>c.byeB)||
+                    c.id!=int(i)||c.season!=loaded.season_||
+                    c.leagueId < -1||c.leagueId>=int(loaded.leagues_.size())||
+                    c.round<0||c.round>2||
+                    c.champion < -1||c.champion>=int(loaded.clubs_.size())||
+                    c.byeA < -1||c.byeA>=int(loaded.clubs_.size())||
+                    c.byeB < -1||c.byeB>=int(loaded.clubs_.size())||
+                    !getString(f,c.name))
+                    throw std::runtime_error("Кубковые соревнования");
+                loaded.cups_.push_back(std::move(c));
+            }
+            for(size_t i=0,n=size(100000);i<n;++i){
+                TrophyRecord t;
+                if(!(f>>t.season>>t.cupId>>t.winner>>t.runnerUp)||
+                    t.season<2026||t.season>loaded.season_||t.cupId<0||t.cupId>6||
+                    t.winner<0||t.winner>=int(loaded.clubs_.size())||
+                    t.runnerUp<0||t.runnerUp>=int(loaded.clubs_.size())||
+                    t.runnerUp==t.winner)
+                    throw std::runtime_error("История кубковых чемпионов");
+                loaded.trophies_.push_back(t);
+            }
+            for(size_t i=0,n=size(100000);i<n;++i){
+                LeagueRecord h;
+                if(!(f>>h.season>>h.leagueId>>h.winner>>h.runnerUp>>h.points)||
+                    h.season<2026||h.season>=loaded.season_||
+                    h.leagueId<0||h.leagueId>=int(loaded.leagues_.size())||
+                    h.winner<0||h.winner>=int(loaded.clubs_.size())||
+                    h.runnerUp<0||h.runnerUp>=int(loaded.clubs_.size())||
+                    h.winner==h.runnerUp||h.points<0)
+                    throw std::runtime_error("История чемпионатов");
+                loaded.leagueHistory_.push_back(h);
+            }
+            for(const auto& m:loaded.matches_)if(m.competition>=int(loaded.cups_.size()))
+                throw std::runtime_error("Турнир матча не найден");
+        }else{
+            // Old career migration: start cups now only if the first cup day
+            // has not passed. Otherwise start them next season.
+            if(loaded.day_<20)loaded.createCups();
         }
         if(loaded.teamId_<0||loaded.teamId_>=int(loaded.clubs_.size()))throw std::runtime_error("Ваш клуб");
         for(const auto& c:loaded.clubs_)if(c.id<0||c.id>=int(loaded.clubs_.size())||c.league<0||c.league>=int(loaded.leagues_.size()))throw std::runtime_error("Ссылки клубов");
