@@ -85,10 +85,15 @@ int main(){
     assert(game.live().shotsA==restored.live().shotsA);
     assert(game.live().goalsH==restored.live().goalsH);
     assert(game.live().goalsA==restored.live().goalsA);
+    const int playedMatchId=game.live().id;
     while(game.hasLiveMatch())game.stepLiveMatch(1);
     assert(!game.hasLiveMatch());
+    assert(game.matches().at(playedMatchId).played);
     const auto after=game.pitchFrame();
-    if(after.homeClub>=0)validate(after,game);
+    validate(after,game);
+    assert(after.minute==90);
+    assert(after.homeGoals==game.matches().at(playedMatchId).homeGoals);
+    assert(after.awayGoals==game.matches().at(playedMatchId).awayGoals);
     std::filesystem::remove("v11_pitch_mid.fus");
     std::cout<<"PASS v0.11: actor formation, ball paths, deterministic visual frames, "
                 "save/resume playback and RNG isolation\n";
