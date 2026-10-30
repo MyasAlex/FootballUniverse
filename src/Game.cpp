@@ -931,6 +931,7 @@ std::string Game::homeText()const{
     o<<"Подготовка команды: "<<tactics[myClub().tactic]<<" / "<<formations[myClub().formation]<<"\n\n";
     if(auto m=upcomingMatch()){
         o<<"СЛЕДУЮЩИЙ МАТЧ\n";
+        o<<matchLabel(*m)<<"\n";
         o<<clubs_[m->home].name<<" — "<<clubs_[m->away].name<<"\n";
         o<<"Через дней: "<<std::max(0,m->day-day_)<<"\n\n";
     }
@@ -1000,8 +1001,12 @@ std::string Game::newsText()const{
     return o.str();
 }
 std::string Game::helpText()const{
-    return "FOOTBALL UNIVERSE 0.7 / ПРОТОТИП\n\n"
+    return "FOOTBALL UNIVERSE 0.8 / ПРОТОТИП\n\n"
     "Это самостоятельная C++-игра с текстовым и 2D-отображением матча.\n"
+    "Календарь и кубки: вкладка «Архив» показывает матчи, сетку кубков и историю чемпионов.\n"
+    "В шести странах: национальные кубки из 6 клубов, один международный кубок из 8.\n"
+    "Кубковые ничьи решаются пенальти, кубковые матчи не прибавляют очков в таблицу.\n"
+    "Результаты финалов и победители чемпионатов сохраняются между сезонами.\n"
     "Создайте карьеру, выберите должность, сложность, клуб и активные лиги.\n"
     "Меню слева открывает все игровые системы.\n\n"
     "Состав: выберите запасного, впишите ID игрока основы, нажмите «В основу».\n"
@@ -1422,7 +1427,8 @@ std::string Game::matchText()const{
     std::ostringstream o;
     if(hasLiveMatch()){
         const auto& l=live_;const auto& m=matches_[l.id];
-        o<<"ИДЁТ МАТЧ • "<<l.minute<<"'\n\n";
+        o<<"ИДЁТ МАТЧ • "<<l.minute<<"'\n";
+        o<<matchLabel(m)<<"\n\n";
         o<<clubs_[m.home].name<<"  "<<l.goalsH<<":"<<l.goalsA<<"  "<<clubs_[m.away].name<<"\n";
         o<<"Удары: "<<l.shotsH<<"–"<<l.shotsA<<"   xG: "<<std::fixed<<std::setprecision(2)<<l.xgH/100.0<<"–"<<l.xgA/100.0<<"\n";
         o<<"Тактика: "<<tactics[myClub().tactic]<<"\n";
@@ -1433,11 +1439,13 @@ std::string Game::matchText()const{
         o<<"и нажмите «Заменить» (доступно в интерактивном матче).\n\n";
         for(const auto&e:l.events)o<<std::setw(3)<<e.minute<<"' "<<e.text<<"\n";
     }else if(matchDue()){
-        auto m=upcomingMatch();o<<"СЕГОДНЯ ИГРА\n\n"<<clubs_[m->home].name<<" — "<<clubs_[m->away].name<<"\n\n";
+        auto m=upcomingMatch();o<<"СЕГОДНЯ ИГРА\n"<<matchLabel(*m)<<"\n\n"
+           <<clubs_[m->home].name<<" — "<<clubs_[m->away].name<<"\n\n";
         o<<"Нажмите «Начать матч» для трансляции по минутам\nили «Мгновенно» для немедленного результата.\n";
         o<<"В интерактивном матче доступны замены и тактические решения.\n";
     }else if(auto m=upcomingMatch()){
-        o<<"СЛЕДУЮЩИЙ МАТЧ\n\n"<<clubs_[m->home].name<<" — "<<clubs_[m->away].name<<"\n";
+        o<<"СЛЕДУЮЩИЙ МАТЧ\n"<<matchLabel(*m)<<"\n\n"
+         <<clubs_[m->home].name<<" — "<<clubs_[m->away].name<<"\n";
         o<<"До матча: "<<std::max(0,m->day-day_)<<" дн.\n\n";
         o<<"До игрового дня можно переключиться через «Следующий день».\n";
     }else o<<"Матчей в текущем календаре больше нет.\n";
@@ -1447,7 +1455,10 @@ std::string Game::matchArchive()const{
     std::ostringstream o;o<<"АРХИВ МАТЧЕЙ СЕЗОНА "<<season_<<"/"<<(season_+1)%100<<"\n\n";
     int count=0;
     for(const auto& m:matches_)if(m.played&&(m.home==teamId_||m.away==teamId_)){
-        o<<clubs_[m.home].name<<"  "<<m.homeGoals<<":"<<m.awayGoals<<"  "<<clubs_[m.away].name<<"\n";
+        o<<matchLabel(m)<<" • День "<<m.day<<"\n";
+        o<<clubs_[m.home].name<<"  "<<m.homeGoals<<":"<<m.awayGoals<<"  "<<clubs_[m.away].name;
+        if(m.penaltiesH>=0)o<<" (пен. "<<m.penaltiesH<<":"<<m.penaltiesA<<")";
+        o<<"\n";
         o<<"Удары: "<<m.shotsH<<" / "<<m.shotsA<<";  xG: "<<m.xgH/100.0<<" / "<<m.xgA/100.0<<"\n";
         for(const auto& e:m.events)o<<" "<<e.minute<<"' "<<e.text<<"\n";
         o<<"\n";count++;
@@ -1457,7 +1468,10 @@ std::string Game::matchArchive()const{
     for(auto it=archive_.rbegin();it!=archive_.rend()&&previous<25;++it){
         const auto& m=*it;
         if(m.home!=teamId_&&m.away!=teamId_)continue;
-        o<<m.season<<"/"<<(m.season+1)%100<<" "<<clubs_[m.home].name<<" "<<m.homeGoals<<":"<<m.awayGoals<<" "<<clubs_[m.away].name<<"\n";
+        o<<m.season<<"/"<<(m.season+1)%100<<" "<<matchLabel(m)<<"\n";
+        o<<clubs_[m.home].name<<" "<<m.homeGoals<<":"<<m.awayGoals<<" "<<clubs_[m.away].name;
+        if(m.penaltiesH>=0)o<<" (пен. "<<m.penaltiesH<<":"<<m.penaltiesA<<")";
+        o<<"\n";
         for(const auto& e:m.events)if(e.text.find("ГОЛ!")!=std::string::npos)o<<"  "<<e.minute<<"' "<<e.text<<"\n";
         ++previous;
     }
