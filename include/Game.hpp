@@ -16,6 +16,9 @@ struct Player {
     int goals=0, appearances=0, yellow=0, red=0;
     bool starter=false; // chosen in matchday starting XI
     int trainingFocus=-1; // -1 = team training; 0..9 = individual skill
+    int releaseClause=0, sellOnClub=-1, sellOnPct=0;
+    int parentClub=-1, loanReturnDay=-1, loanWageShare=100;
+    int careerAppearances=0;
 };
 struct Club {
     int id=0, league=0;
@@ -45,6 +48,13 @@ struct TransferDeal {
     int submittedDay=0, replyDay=0, expiryDay=0;
     int rivalClub=-1, rounds=0;
     DealStage stage=DealStage::ClubReview;
+    int kind=0; // 0 = permanent, 1 = temporary loan
+    int installments=1, appearanceBonus=0, sellOnPct=0, exchangePlayerId=-1;
+    int loanDays=180, loanWageShare=50;
+};
+struct DeferredPayment {
+    int playerId=0, buyerClub=-1, sellerClub=-1, amount=0;
+    int dueDay=0, triggerAppearances=0; // 0 = scheduled, positive = appearances milestone
 };
 struct LiveMatch {
     int id=-1, minute=0, goalsH=0, goalsA=0, shotsH=0, shotsA=0, xgH=0, xgA=0;
@@ -70,10 +80,15 @@ public:
     const ScoutReport* scoutReport(int playerId) const;
     const TransferDeal* transferDeal(int playerId) const;
     const std::vector<TransferDeal>& transferDeals() const { return deals_; }
+    const std::vector<DeferredPayment>& deferredPayments() const { return payments_; }
     std::string negotiationText(int playerId) const;
     std::string proposePlayerContract(int playerId, int weeklyWage, int years);
     std::string acceptNegotiationTerms(int playerId);
     std::string cancelNegotiation(int playerId);
+    std::string offerStructuredTransfer(int playerId, int fee, int installments, int appearanceBonus, int sellOnPct, int exchangePlayerId=-1);
+    std::string offerLoan(int playerId, int fee, int wageShare, int durationDays);
+    std::string setReleaseClause(int playerId, int amount);
+    std::string sellPlayer(int playerId, int buyerClub, int amount);
     const Club& myClub() const;
     Club& myClub();
     const Player* findPlayer(int id) const;
@@ -144,6 +159,9 @@ private:
     std::vector<Message> inbox_;
     std::vector<ScoutReport> scouts_;
     std::vector<TransferDeal> deals_;
+    std::vector<DeferredPayment> payments_;
+    void processDeferredPayments();
+    void processLoanReturns();
     void processTransferNegotiations();
     void finalizeTransfer(TransferDeal& deal);
     int lastTeamTalkDay_=-30;
