@@ -305,6 +305,9 @@ PitchFrame Game::pitchFrame()const{
     if(hasLiveMatch()){
         if(live_.id>=0&&live_.id<int(matches_.size()))match=&matches_[live_.id];
     }else if(matchDue())match=upcomingMatch();
+    else if(const Match* previous=lastPlayedMatchForClub();
+            previous&&previous->season==season_&&previous->day==day_)
+        match=previous; // Keep the final score on screen until the calendar advances.
     else if(const Match* upcoming=upcomingMatch())match=upcoming;
     else match=lastPlayedMatchForClub();
     if(!match)return frame;
