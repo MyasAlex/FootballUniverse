@@ -7,10 +7,29 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <cstdio>
+#include <cstring>
 #include <iomanip>
 #include "Game.hpp"
 
 namespace {
+void trace(const char* message) noexcept {
+    HANDLE file=CreateFileA("fu_startup.log",FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,
+        nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file!=INVALID_HANDLE_VALUE){
+        DWORD written=0;
+        WriteFile(file,message,DWORD(std::strlen(message)),&written,nullptr);
+        WriteFile(file,"\r\n",2,&written,nullptr);
+        CloseHandle(file);
+    }
+}
+LONG WINAPI crashLog(EXCEPTION_POINTERS* info) {
+    char msg[256]{};
+    sprintf_s(msg,"FATAL exception: 0x%08lx at address %p",
+        info->ExceptionRecord->ExceptionCode,info->ExceptionRecord->ExceptionAddress);
+    trace(msg);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 fu::Game game;
 HINSTANCE appInstance{};
 HWND mainWindow{}, mainText{}, listControl{}, inputControl{}, titleText{}, subtitleText{}, statusText{}, pitchWindow{}, clubLogoWindow{};
@@ -333,6 +352,7 @@ void showPage(int next){
     tell(game.status());arrange();InvalidateRect(pitchWindow,nullptr,TRUE);InvalidateRect(clubLogoWindow,nullptr,TRUE);
 }
 void showSetup(){
+    trace("showSetup BEGIN");
     started=false;page=-1;
     for(auto& w:nav)show(w,false);
     for(auto& w:actions)show(w,false);
@@ -344,7 +364,7 @@ void showSetup(){
     SetWindowTextW(setupName,L"Алексей");
     std::vector<std::wstring> clubs;
     for(const auto& c:game.clubs())clubs.push_back(wide(c.name+" ("+game.leagues()[c.league].country+")"));
-    fillCombo(setupClub,clubs,0);
+    fillCombo(setupClub,clubs,0);trace("showSetup clubs populated");
     fillCombo(setupRole,{L"Главный тренер",L"Спортивный директор",L"Владелец клуба",L"Президент клуба",L"Песочница (все полномочия)"},0);
     fillCombo(setupDifficulty,{L"Лёгкая",L"Реалистичная",L"Сложная",L"Свободная песочница"},1);
     SendMessageW(setupLeagues,LB_RESETCONTENT,0,0);
@@ -352,7 +372,7 @@ void showSetup(){
     for(int i=0;i<6;++i)SendMessageW(setupLeagues,LB_SETSEL,i<2,i);
     SetWindowTextW(setupHelp,L"Укажите имя, клуб, должность, сложность.\nВ списке справа отметьте активные лиги (Ctrl/Shift не нужны).\nЛига выбранного клуба включится автоматически.");
     tell("Демо-база: известные клубы, процедурные игроки. Полная лицензированная база ещё не добавлена.");
-    show(clubLogoWindow,true);arrange();InvalidateRect(clubLogoWindow,nullptr,TRUE);
+    trace("showSetup before arrange");show(clubLogoWindow,true);arrange();InvalidateRect(clubLogoWindow,nullptr,TRUE);trace("showSetup END");
 }
 void startCareer(){
     int club=int(SendMessageW(setupClub,CB_GETCURSEL,0,0));
@@ -474,7 +494,7 @@ void drawButton(const DRAWITEMSTRUCT* dis){
 LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     switch(msg){
     case WM_CREATE:{
-        mainWindow=hwnd;
+        trace("WM_CREATE BEGIN");mainWindow=hwnd;
         titleText=create(L"STATIC",L"",WS_CHILD|WS_VISIBLE|SS_LEFT);
         subtitleText=create(L"STATIC",L"",WS_CHILD|WS_VISIBLE|SS_LEFT);
         SendMessageW(titleText,WM_SETFONT,WPARAM(titleFont),TRUE);
@@ -499,7 +519,7 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         setupStart=create(L"BUTTON",L"Создать карьеру",WS_CHILD|WS_VISIBLE|BS_OWNERDRAW|WS_TABSTOP,SETUP_START);
         setupLoad=create(L"BUTTON",L"Загрузить",WS_CHILD|WS_VISIBLE|BS_OWNERDRAW|WS_TABSTOP,SETUP_LOAD);
         SendMessageW(setupLeagues,WM_SETFONT,WPARAM(smallFont),TRUE);
-        showSetup();return 0;
+        trace("WM_CREATE before setup");showSetup();trace("WM_CREATE END");return 0;
     }
     case WM_SIZE:arrange();return 0;
     case WM_COMMAND:{
@@ -539,26 +559,27 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
 }
 
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int showCommand){
+    SetUnhandledExceptionFilter(crashLog);trace("wWinMain START");
     appInstance=instance;
     SetProcessDPIAware();
     Gdiplus::GdiplusStartupInput gdiplusInput;
     if(Gdiplus::GdiplusStartup(&gdiplusToken,&gdiplusInput,nullptr)!=Gdiplus::Ok)return 1;
-    uiFont=CreateFontW(-18,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
+    trace("GDI+ STARTED");uiFont=CreateFontW(-18,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
     smallFont=CreateFontW(-16,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
     titleFont=CreateFontW(-33,0,0,0,FW_BOLD,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Segoe UI");
     monoFont=CreateFontW(-17,0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,FIXED_PITCH,L"Consolas");
     backgroundBrush=CreateSolidBrush(background);surfaceBrush=CreateSolidBrush(surface);inputBrush=CreateSolidBrush(surface);
-    WNDCLASSEXW pitchClass{};pitchClass.cbSize=sizeof(pitchClass);pitchClass.hInstance=instance;pitchClass.lpfnWndProc=pitchProc;
+    trace("fonts STARTED");WNDCLASSEXW pitchClass{};pitchClass.cbSize=sizeof(pitchClass);pitchClass.hInstance=instance;pitchClass.lpfnWndProc=pitchProc;
     pitchClass.lpszClassName=L"FU_Pitch";pitchClass.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassExW(&pitchClass);
     WNDCLASSEXW logoClass{};logoClass.cbSize=sizeof(logoClass);logoClass.hInstance=instance;logoClass.lpfnWndProc=logoProc;
     logoClass.lpszClassName=L"FU_ClubLogo";logoClass.hCursor=LoadCursor(nullptr,IDC_ARROW);RegisterClassExW(&logoClass);
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"FootballUniverseDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     wc.hbrBackground=backgroundBrush;RegisterClassExW(&wc);
-    HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe — C++ Prototype 0.3",
+    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe — C++ Prototype 0.3",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,840,nullptr,nullptr,instance,nullptr);
     if(!window){MessageBoxW(nullptr,L"Не удалось создать окно",L"Ошибка",MB_ICONERROR);return 1;}
-    ShowWindow(window,showCommand);UpdateWindow(window);
+    trace("window CREATED");ShowWindow(window,showCommand);trace("window SHOWN");UpdateWindow(window);trace("window UPDATED");
     MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){TranslateMessage(&msg);DispatchMessageW(&msg);}
     DeleteObject(uiFont);DeleteObject(titleFont);DeleteObject(monoFont);DeleteObject(smallFont);
     DeleteObject(backgroundBrush);DeleteObject(surfaceBrush);DeleteObject(inputBrush);

@@ -67,10 +67,20 @@ jobs:
             for ($i = 0; $i -lt 25; $i++) {
               Start-Sleep -Milliseconds 400
               $proc.Refresh()
-              if ($proc.HasExited) { throw "Game exited during startup with code $($proc.ExitCode)" }
+              if ($proc.HasExited) {
+                if (Test-Path (Join-Path $folder 'fu_startup.log')) {
+                  Get-Content (Join-Path $folder 'fu_startup.log') | ForEach-Object { Write-Host "TRACE: $_" }
+                }
+                throw "Game exited during startup with code $($proc.ExitCode)"
+              }
               if ($proc.MainWindowHandle -ne 0) { $opened = $true; break }
             }
-            if (-not $opened) { throw 'Game did not open a main window within 10 seconds' }
+            if (-not $opened) {
+              if (Test-Path (Join-Path $folder 'fu_startup.log')) {
+                Get-Content (Join-Path $folder 'fu_startup.log') | ForEach-Object { Write-Host "TRACE: $_" }
+              }
+              throw 'Game did not open a main window within 10 seconds'
+            }
             Write-Host "Desktop GUI launched successfully, HWND: $($proc.MainWindowHandle)"
           } finally {
             if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
