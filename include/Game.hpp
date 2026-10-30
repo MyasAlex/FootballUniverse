@@ -37,7 +37,16 @@ struct Match {
     bool played=false;
     int shotsH=0, shotsA=0, xgH=0, xgA=0; // xG in hundredths
     std::vector<Event> events;
+    int competition=-1, round=0; // -1 league, 0..5 national cup, 6 continental invitation
+    int penaltiesH=-1, penaltiesA=-1; // only for drawn knockout matches
 };
+struct CupCompetition {
+    int id=0, season=2026, leagueId=-1, round=0, champion=-1;
+    int byeA=-1, byeB=-1;
+    std::string name;
+};
+struct TrophyRecord { int season=2026, cupId=0, winner=-1, runnerUp=-1; };
+struct LeagueRecord { int season=2026, leagueId=0, winner=-1, runnerUp=-1, points=0; };
 struct Message { int day=0; std::string title, body; };
 struct ScoutReport { int playerId=0, days=0, ability=0, potential=0; bool shortlisted=false; };
 enum class DealStage : int {
@@ -88,6 +97,14 @@ public:
     const std::vector<Player>& players() const { return players_; }
     const std::vector<Match>& matches() const { return matches_; }
     const std::vector<Match>& archive() const { return archive_; }
+    const std::vector<CupCompetition>& cups() const { return cups_; }
+    const std::vector<TrophyRecord>& trophyHistory() const { return trophies_; }
+    const std::vector<LeagueRecord>& leagueHistory() const { return leagueHistory_; }
+    std::string calendarText() const;
+    std::string cupsText() const;
+    std::string seasonHistoryText() const;
+    std::string scorersText() const;
+    int knockoutWinner(const Match& match) const;
     const std::vector<Message>& inbox() const { return inbox_; }
     const std::vector<ScoutReport>& scoutReports() const { return scouts_; }
     const ScoutReport* scoutReport(int playerId) const;
@@ -183,6 +200,9 @@ private:
     std::vector<Player> players_;
     std::vector<Match> matches_;
     std::vector<Match> archive_;
+    std::vector<CupCompetition> cups_;
+    std::vector<TrophyRecord> trophies_;
+    std::vector<LeagueRecord> leagueHistory_;
     std::vector<Message> inbox_;
     std::vector<ScoutReport> scouts_;
     std::vector<TransferDeal> deals_;
@@ -211,6 +231,11 @@ private:
     void createSquads();
     void autoAssignCaptains();
     void createFixtures();
+    void createCups(const std::vector<int>& continentalEntrants={});
+    void progressCups();
+    void addCupMatch(int competition,int round,int day,int home,int away);
+    std::string matchLabel(const Match& match) const;
+    void archiveLeagueChampions();
     void pickLineup(int clubId);
     void initializeLineups(LiveMatch& live, const Match& match) const;
     int lineupStrength(const std::vector<int>& ids) const;
