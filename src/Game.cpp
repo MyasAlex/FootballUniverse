@@ -1,4 +1,5 @@
 #include "Game.hpp"
+#include "WorldDatabase.hpp"
 #include "TacticalModel.hpp"
 #include <algorithm>
 #include <chrono>
@@ -1010,6 +1011,52 @@ void Game::newCareer(std::string manager,int clubId,Role role,Difficulty difficu
 const Club& Game::myClub()const{return clubs_.at(teamId_);} Club& Game::myClub(){return clubs_.at(teamId_);}
 const Player* Game::findPlayer(int id)const{for(const auto& p:players_)if(p.id==id)return &p;return nullptr;}
 const Club* Game::findClub(int id)const{return id>=0&&id<int(clubs_.size())?&clubs_[id]:nullptr;}
+
+std::string Game::addWorldPlayerToSandbox(const WorldPlayer& identity){
+    if(role_!=Role::Sandbox&&difficulty_!=Difficulty::Free)
+        return "Добавление футболистов из справочника разрешено только в режиме песочницы.";
+    if(hasLiveMatch())return "Завершите текущий матч перед добавлением игрока.";
+    const auto& qid=identity.wikidataQid;
+    if(qid.size()<2||qid.size()>24||qid[0]!='Q'||
+       !std::all_of(qid.begin()+1,qid.end(),[](unsigned char c){return c>='0'&&c<='9';}))
+        return "Для этого игрока нет подтверждаемого Wikidata ID: добавить в игровую команду нельзя.";
+    if(identity.age<16||identity.age>41||identity.name.size()<3||identity.name.size()>120)
+        return "В справочнике недостаточно сведений о возрасте или имени игрока.";
+    for(const auto& player:players_)if(player.sourceQid==qid)
+        return "Этот футболист уже присутствует в игровой карьере: "+player.name;
+    if(ownPlayers().size()>=40)
+        return "В команде уже 40 игроков — освободите место.";
+    std::string pos="";
+    std::string broad=identity.position;
+    std::transform(broad.begin(),broad.end(),broad.begin(),[](unsigned char c){return char(std::tolower(c));});
+    if(broad.find("goal")!=std::string::npos)pos="GK";
+    else if(broad.find("defend")!=std::string::npos||broad.find("back")!=std::string::npos)pos="DC";
+    else if(broad.find("mid")!=std::string::npos)pos="MC";
+    else if(broad.find("forward")!=std::string::npos||broad.find("strik")!=std::string::npos||
+            broad.find("wing")!=std::string::npos)pos="ST";
+    if(pos.empty())return "У игрока не указана понятная игровая позиция.";
+    Player player;
+    player.id=nextPlayerId_++;player.club=teamId_;
+    player.name=identity.name;player.position=pos;player.sourceQid=qid;
+    player.age=identity.age+std::max(0,season_-2026);
+    player.personality="Профессионал";
+    const int power=clamp(33+myClub().prestige/2+random(-5,5),38,86);
+    for(auto& stat:player.skill)stat=clamp(power+random(-12,12),15,95);
+    if(pos=="GK")player.skill[9]=clamp(power+12,20,95);
+    else if(pos=="DC")player.skill[3]=clamp(power+12,20,95);
+    else if(pos=="MC")player.skill[2]=clamp(power+12,20,95);
+    else player.skill[1]=clamp(power+12,20,95);
+    player.potential=clamp(power+random(3,14),40,99);
+    player.wage=500+power*120;player.value=200000+power*power*800;
+    player.contractYear=season_+2;
+    players_.push_back(std::move(player));
+    pickLineup(teamId_);
+    status_="ПЕСОЧНИЦА: "+identity.name+" добавлен в игровой состав. "
+            "Его навыки и контракт вымышлены; это НЕ подтверждённый реальный трансфер.";
+    addMessage("Игрок из мировой базы",status_);
+    return status_;
+}
+
 std::vector<int> Game::ownPlayers() const {std::vector<int> r;for(const auto& p:players_)if(p.club==teamId_)r.push_back(p.id);return r;}
 const ScoutReport* Game::scoutReport(int playerId)const{
     for(const auto& r:scouts_)if(r.playerId==playerId)return &r;

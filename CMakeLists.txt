@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FootballUniverse VERSION 0.15.0 LANGUAGES CXX)
+project(FootballUniverse VERSION 0.16.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Link the MSVC runtime statically so players do not need Visual C++ installed.
@@ -9,7 +9,7 @@ if(MSVC)
     add_compile_options(/utf-8 /W4)
 endif()
 add_library(fu_core src/Game.cpp src/Preparation.cpp src/TacticalModel.cpp
-    src/WorldMarket.cpp src/PlayerSearch.cpp src/CareerStorage.cpp)
+    src/WorldMarket.cpp src/PlayerSearch.cpp src/CareerStorage.cpp src/WorldDatabase.cpp)
 target_include_directories(fu_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 if(WIN32)
     add_executable(FootballUniverse WIN32 src/WinMain.cpp)
@@ -124,3 +124,7 @@ set_tests_properties(adaptive_coaches_and_live_advice PROPERTIES WORKING_DIRECTO
 add_executable(fu_major_update_tests tests/test_major_update.cpp)
 target_link_libraries(fu_major_update_tests PRIVATE fu_core)
 add_test(NAME tactical_board_analytics_ai_substitutions COMMAND fu_major_update_tests)
+
+add_executable(fu_world_database_tests tests/test_world_database.cpp)
+target_link_libraries(fu_world_database_tests PRIVATE fu_core)
+add_test(NAME huge_global_football_index COMMAND fu_world_database_tests)
