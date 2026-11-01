@@ -15,6 +15,18 @@ jobs:
     steps:
       - name: Get sources
         uses: actions/checkout@v4
+      - name: Install Python for offline world football catalogue
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download licensed football identity snapshot and build offline index
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/build_world_database.py
+          $meta = Get-Content data/world_players_meta.json -Raw | ConvertFrom-Json
+          if ($meta.players_written -lt 20000) { throw "Insufficient global player database" }
+          Write-Host "WORLD PLAYERS: $($meta.players_written), COUNTRIES: $($meta.distinct_nationalities)"
       - name: Configure with Visual Studio C++ compiler
         run: cmake -S . -B build-cloud -G "Visual Studio 17 2022" -A x64
       - name: Compile game and tests
@@ -48,11 +60,11 @@ jobs:
           start "" "FootballUniverse.exe"
           '@ | Set-Content "$folder/PLAY.bat" -Encoding Ascii
           @'
-          Football Universe 0.15.0 - Windows x64
+          Football Universe 0.16.0 - Windows x64
           Run PLAY.bat or FootballUniverse.exe.
           C++ and Visual Studio are NOT required to run.
           Save files (career.fus) remain in the game folder if started through PLAY.bat.
-          Includes AI bench decisions, advanced tactical instructions, performance analytics and club board objectives.
+          Includes global player identity catalogue, scouting filters, AI bench decisions and club management. Global identities are not verified current club rosters.
           Save files from v0.14 (FUSAVE_13) can be loaded; new saves use FUSAVE_15.
           Back up your original career.fus before installing.
           Windows GUI launch, UI panel layout and game-engine tests are checked in CI.
@@ -104,6 +116,13 @@ jobs:
       - name: Check all Windows panel layouts after navigation and resize
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File tests/windows_ui_layout_smoke.ps1
+      - name: Verify global identity database is bundled
+        shell: pwsh
+        run: |
+          if (-not (Test-Path dist/FootballUniverse/data/world_players.csv)) { throw "World DB not bundled" }
+          $meta=Get-Content dist/FootballUniverse/data/world_players_meta.json -Raw | ConvertFrom-Json
+          if ($meta.players_written -lt 20000) { throw "World DB smaller than expected" }
+          Write-Host "PASS: $($meta.players_written) offline real footballer identities bundled"
       - name: Downloadable Windows ZIP
         uses: actions/upload-artifact@v4
         with:

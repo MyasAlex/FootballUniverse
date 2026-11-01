@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include "Game.hpp"
 #include "PlayerSearch.hpp"
+#include "WorldDatabase.hpp"
 #include "CareerStorage.hpp"
 
 namespace {
@@ -41,13 +42,23 @@ fu::Game& game() {
 }
 HINSTANCE appInstance{};
 HWND mainWindow{}, mainText{}, listControl{}, inputControl{}, titleText{}, subtitleText{}, statusText{}, pitchWindow{}, clubLogoWindow{};
-constexpr int NAV_COUNT=21;
+constexpr int NAV_COUNT=22;
 constexpr int PREPARATION_PAGE=16;
-constexpr int WORLD_MARKET_PAGE=17, SAVES_PAGE=18, ANALYTICS_PAGE=19, BOARD_PAGE=20;
+constexpr int WORLD_MARKET_PAGE=17, SAVES_PAGE=18, ANALYTICS_PAGE=19, BOARD_PAGE=20, WORLD_DATABASE_PAGE=21;
 HWND nav[NAV_COUNT]{}, actions[6]{};
 HWND setupName{}, setupClub{}, setupRole{}, setupDifficulty{}, setupLeagues{}, setupHelp{}, setupStart{}, setupLoad{};
 HWND searchName{},searchPosition{},searchAge{},searchPrice{},searchSort{},searchApply{},searchReset{},searchCount{};
 HWND searchLabels[5]{};
+HWND worldCountry{}, worldCountryLabel{};
+fu::WorldQuery worldQuery;
+size_t worldOffset=0;
+fu::WorldDatabase& worldDatabase(){
+    static fu::WorldDatabase database;
+    static bool attempted=false;
+    if(!attempted){attempted=true;database.load("data/world_players.csv");}
+    return database;
+}
+
 fu::PlayerSearchFilter marketFilter;
 HFONT uiFont{}, titleFont{}, monoFont{}, smallFont{};
 HBRUSH backgroundBrush{}, surfaceBrush{}, inputBrush{};
@@ -81,7 +92,7 @@ std::vector<int> visibleIds;
 std::vector<int> activeNavigation;
 int lastListIndex=0;
 std::wstring detailText;
-const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Карьера тренера",L"Подготовка к матчу",L"Мировой рынок",L"Сохранения",L"Аналитика",L"Совет директоров"};
+const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Карьера тренера",L"Подготовка к матчу",L"Мировой рынок",L"Сохранения",L"Аналитика",L"Совет директоров",L"Мировая база игроков"};
 static_assert(sizeof(navLabels)/sizeof(navLabels[0])==NAV_COUNT);
 const int NAV_START=100, ACTION_START=300, LIST_ID=501, SETUP_START=600, SETUP_LOAD=601, SETUP_CLUB=602, SETUP_LEAGUES=603;
 constexpr int SEARCH_NAME=700,SEARCH_POSITION=701,SEARCH_AGE=702,SEARCH_PRICE=703,
@@ -142,8 +153,30 @@ void resetPlayback(){
     autoPlayMatch=false;previousPitch={};currentPitch={};lastPlaybackTick=0;pitchTransitionTick=0;
 }
 void showSearchControls(bool visible){
-    for(auto control:{searchName,searchPosition,searchAge,searchPrice,searchSort,searchApply,searchReset,searchCount})show(control,visible);
-    for(auto label:searchLabels)show(label,visible);
+    bool worldwide=visible&&page==WORLD_DATABASE_PAGE;
+    for(auto control:{searchName,searchPosition,searchAge,searchApply,searchReset,searchCount})show(control,visible);
+    show(searchPrice,visible&&!worldwide);
+    show(searchSort,visible&&!worldwide);
+    for(int i=0;i<5;++i)show(searchLabels[i],visible&&(!worldwide||i<3));
+    show(worldCountry,worldwide);show(worldCountryLabel,worldwide);
+}
+void resetWorldSearch(){
+    worldQuery={};worldOffset=0;
+    SetWindowTextW(searchName,L"");SetWindowTextW(searchAge,L"");
+    SetWindowTextW(worldCountry,L"");SendMessageW(searchPosition,CB_SETCURSEL,0,0);
+}
+void readWorldSearch(){
+    worldQuery.name=utf8(getText(searchName));
+    const int positionChoice=int(SendMessageW(searchPosition,CB_GETCURSEL,0,0));
+    worldQuery.position=positionChoice<=0?"":positionChoice==1?"Goalkeeper":
+        positionChoice<=4?"Defender":positionChoice<=10?"Midfielder":"Forward";
+    worldQuery.country=utf8(getText(worldCountry));
+    try{
+        auto age=utf8(getText(searchAge));
+        size_t consumed=0;int value=age.empty()?0:std::stoi(age,&consumed);
+        worldQuery.maxAge=(value==0||value>=15&&value<=100&&consumed==age.size())?value:0;
+    }catch(...){worldQuery.maxAge=0;}
+    worldOffset=0;
 }
 void resetPlayerSearch(){
     marketFilter=fu::PlayerSearchFilter{};shortlistOnly=false;
@@ -216,7 +249,7 @@ std::string playerDetails(int id){
     return o.str();
 }
 bool roleHasPage(int screen){
-    if(screen==ANALYTICS_PAGE||screen==BOARD_PAGE)return true;
+    if(screen==ANALYTICS_PAGE||screen==BOARD_PAGE||screen==WORLD_DATABASE_PAGE)return true;
     if(!started||game().difficulty()==fu::Difficulty::Free||
        game().role()==fu::Role::Sandbox)return true;
     switch(game().role()){
@@ -287,11 +320,11 @@ void arrange(){
         for(int i=0;i<NAV_COUNT;++i)if(roleHasPage(i))
             move(nav[i],10,74+row++*navStep,sidebarWidth-18,
                  std::max(18,navStep-2));
-        bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15||page==SAVES_PAGE;
+        bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15||page==SAVES_PAGE||page==WORLD_DATABASE_PAGE;
         bool pitchNeeded=(page==4&&showPitch);
-        int contentY=page==6?210:102;
+        int contentY=(page==6||page==WORLD_DATABASE_PAGE)?210:102;
         int contentH=std::max(85,h-284-(contentY-102));
-        if(page==6){
+        if(page==6||page==WORLD_DATABASE_PAGE){
             const int nameW=bodyWidth*34/100,positionW=100,ageW=95;
             const int priceW=bodyWidth-nameW-positionW-ageW-24;
             const int positions[]={left,left+nameW+8,left+nameW+positionW+16,left+nameW+positionW+ageW+24};
@@ -301,6 +334,8 @@ void arrange(){
                 move(searchLabels[i],positions[i],99,widths[i],21);
                 move(fields[i],positions[i],122,widths[i],i==1?360:29);
             }
+            move(worldCountryLabel,positions[3],99,widths[3],21);
+            move(worldCountry,positions[3],122,widths[3],29);
             move(searchLabels[4],left,158,105,21);
             move(searchSort,left+108,155,190,250);
             move(searchApply,left+308,155,105,31);
@@ -358,6 +393,7 @@ std::vector<std::wstring> buttonTexts(int p){
         case SAVES_PAGE:return {L"Сохранить",L"Загрузить",L"Из копии",L"Обзор",L"Обновить"};
         case ANALYTICS_PAGE:return {L"Линия защиты",L"Риск атаки",L"Стандарты",L"Подготовка",L"Матч"};
         case BOARD_PAGE:return {L"Обновить",L"Запрос бюджета",L"Финансы",L"Академия",L"Почта"};
+        case WORLD_DATABASE_PAGE:return {L"Найти",L"Далее →",L"← Назад",L"Сброс",L"Трансферы"};
         default:return {L"Обзор",L"—",L"—",L"—",L"—"};
     }
 }
@@ -599,9 +635,26 @@ void detailForSelected(){
     if(id<0){
         if(page==11)textContent(game().academyText());
         else if(page==15)textContent(game().jobMarketText());
+        else if(page==WORLD_DATABASE_PAGE)textContent(worldDatabase().error().empty()?"Совпадений нет. Измените фильтры или выберите другой возраст.":worldDatabase().error()+"\n\nСправочная база пока отсутствует. Игровые составы остаются доступны.");
         else if(page==6)textContent("По заданным фильтрам футболистов нет. Измените ограничения или нажмите «Сброс».\n\nФильтры поиска расположены сверху. Поле внизу предназначено только для трансферного предложения.");
         else textContent("Выберите пункт из списка.");
         return;
+    }
+    if(page==WORLD_DATABASE_PAGE){
+        const fu::WorldPlayer* player=worldDatabase().at(size_t(id));
+        if(!player){textContent("Запись не найдена.");return;}
+        std::ostringstream out;
+        out<<"МИРОВАЯ БАЗА ФУТБОЛИСТОВ (CC0)\n\n";
+        out<<player->name<<"\nПозиция: "<<(player->position.empty()?"неизвестна":player->position);
+        out<<"\nСтрана: "<<(player->nationality.empty()?"неизвестна":player->nationality);
+        out<<"\nДата рождения: "<<(player->birthDate.empty()?"нет данных":player->birthDate);
+        if(player->age)out<<" ("<<player->age<<" лет на 02.11.2026)";
+        out<<"\nReep ID: "<<player->id;
+        if(!player->wikidataQid.empty())out<<"\nWikidata: https://www.wikidata.org/wiki/"<<player->wikidataQid;
+        out<<"\n\nЭто справочный каталог, не игровой трансферный рынок. "
+              "Принадлежность к клубу и актуальность карьеры не подтверждены. "
+              "Зарплаты, контракты и цены не импортированы.";
+        textContent(out.str());return;
     }
     if(page==1)textContent(playerDetails(id)+"\n\n"+game().lineupText());
     else if(page==3)textContent(game().tacticsText()+"\n"+playerDetails(id)+"\n"+
@@ -663,6 +716,17 @@ void populate(){
             addList(wide("#"+std::to_string(id)+" "+marker+p->position+" | "+p->name+
                 " | "+std::to_string(p->age)+" лет | "+std::to_string(p->value)+" €"),id);
         }
+    }else if(page==WORLD_DATABASE_PAGE){
+        auto result=worldDatabase().search({worldQuery.name,worldQuery.position,worldQuery.country,
+                                           worldQuery.maxAge,worldOffset,120});
+        setText(searchCount,"Всего: "+std::to_string(worldDatabase().size())+
+                " | найдено: "+std::to_string(result.total)+
+                " | "+std::to_string(result.indices.empty()?0:worldOffset+1)+"–"+
+                std::to_string(worldOffset+result.indices.size()));
+        for(size_t index:result.indices){
+            const auto* p=worldDatabase().at(index);if(!p)continue;
+            addList(wide(p->name+" | "+p->position+" | "+p->nationality),int(index));
+        }
     }else if(page==11){
         for(const auto& p:game().youthProspects())if(p.club==game().teamId()){
             addList(wide("#"+std::to_string(p.id)+" "+p.position+" "+p.name+
@@ -707,9 +771,9 @@ void showPage(int next){
     if(!samePage)lastListIndex=0;
     // Owner-draw nav does not automatically repaint when a different page is selected.
     for(auto& button:nav)if(button)InvalidateRect(button,nullptr,TRUE);
-    bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15||page==SAVES_PAGE;
+    bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15||page==SAVES_PAGE||page==WORLD_DATABASE_PAGE;
     show(listControl,listNeeded);show(inputControl,page==1||page==6||page==7||page==8||page==9||page==11||page==3||(page==4&&game().hasLiveMatch()));
-    showSearchControls(page==6);
+    showSearchControls(page==6||page==WORLD_DATABASE_PAGE);
     show(pitchWindow,page==4&&showPitch);
     for(int i=0;i<NAV_COUNT;++i)show(nav[i],roleHasPage(i));
     auto labels=buttonTexts(page);
@@ -756,7 +820,7 @@ void showPage(int next){
     if(page==6)updateTransferOfferInput();
     switch(page){
         case 0:textContent(game().homeText());break;
-        case 1:case 3:case 5:case 6:case 7:case 8:case 11:case 12:case 14:case SAVES_PAGE:detailForSelected();break;
+        case 1:case 3:case 5:case 6:case 7:case 8:case 11:case 12:case 14:case SAVES_PAGE:case WORLD_DATABASE_PAGE:detailForSelected();break;
         case 2:textContent(game().tacticsText());break;
 
         case 4:textContent(game().matchText());break;
@@ -1024,6 +1088,15 @@ void trigger(int action){
         if(action==2)response=game().changeSetPieces();
         if(action==3){go(PREPARATION_PAGE);return;}
         if(action==4){go(4);return;}
+    }else if(page==WORLD_DATABASE_PAGE){
+        if(action==0){readWorldSearch();response="Поиск обновлён.";}
+        if(action==1){worldOffset+=120;response="Следующая страница.";}
+        if(action==2){worldOffset=worldOffset>=120?worldOffset-120:0;response="Предыдущая страница.";}
+        if(action==3){resetWorldSearch();response="Фильтры очищены.";}
+        if(action==4){go(6);return;}
+        const auto matches=worldDatabase().search({worldQuery.name,worldQuery.position,worldQuery.country,
+                                                     worldQuery.maxAge,worldOffset,120});
+        if(worldOffset>=matches.total&&worldOffset>0){worldOffset=matches.total?((matches.total-1)/120)*120:0;}
     }else if(page==BOARD_PAGE){
         if(action==1)response=game().requestBoardInvestment();
         if(action==2){go(10);return;}
@@ -1083,6 +1156,8 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
             SendMessageW(searchLabels[i],WM_SETFONT,WPARAM(smallFont),TRUE);
         }
         searchName=create(L"EDIT",L"",WS_CHILD|ES_AUTOHSCROLL|WS_TABSTOP,SEARCH_NAME,WS_EX_CLIENTEDGE);
+        worldCountryLabel=create(L"STATIC",L"Страна",WS_CHILD|SS_LEFT);
+        worldCountry=create(L"EDIT",L"",WS_CHILD|ES_AUTOHSCROLL|WS_TABSTOP,707,WS_EX_CLIENTEDGE);
         searchPosition=create(L"COMBOBOX",L"",WS_CHILD|CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,SEARCH_POSITION);
         searchAge=create(L"EDIT",L"50",WS_CHILD|ES_NUMBER|ES_AUTOHSCROLL|WS_TABSTOP,SEARCH_AGE,WS_EX_CLIENTEDGE);
         searchPrice=create(L"EDIT",L"500000000",WS_CHILD|ES_NUMBER|ES_AUTOHSCROLL|WS_TABSTOP,SEARCH_PRICE,WS_EX_CLIENTEDGE);
@@ -1091,6 +1166,7 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         searchReset=create(L"BUTTON",L"Сброс",WS_CHILD|BS_OWNERDRAW|WS_TABSTOP,SEARCH_RESET);
         searchCount=create(L"STATIC",L"",WS_CHILD|SS_LEFT);
         SendMessageW(searchCount,WM_SETFONT,WPARAM(smallFont),TRUE);
+        SendMessageW(worldCountry,EM_LIMITTEXT,90,0);
         SendMessageW(searchName,EM_LIMITTEXT,120,0);SendMessageW(searchAge,EM_LIMITTEXT,3,0);SendMessageW(searchPrice,EM_LIMITTEXT,10,0);
         fillCombo(searchPosition,{L"Любая",L"GK",L"DL",L"DC",L"DR",L"DM",L"MC",L"AMC",L"ML",L"MR",L"AML",L"AMR",L"ST"},0);
         fillCombo(searchSort,{L"Цена ↑",L"Сила ↓",L"Потенциал ↓",L"Возраст ↑",L"Зарплата ↑",L"Имя А–Я"},0);
@@ -1150,6 +1226,10 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         }
         if(id>=ACTION_START&&id<ACTION_START+6&&code==BN_CLICKED){trigger(id-ACTION_START);return 0;}
         if(id==LIST_ID&&code==LBN_SELCHANGE){lastListIndex=int(SendMessageW(listControl,LB_GETCURSEL,0,0));detailForSelected();if(page==6)updateTransferOfferInput();return 0;}
+        if(page==WORLD_DATABASE_PAGE&&(id==SEARCH_APPLY||id==SEARCH_RESET)&&code==BN_CLICKED){
+            if(id==SEARCH_RESET)resetWorldSearch();else readWorldSearch();
+            showPage(WORLD_DATABASE_PAGE);return 0;
+        }
         if(page==6&&(id==SEARCH_APPLY||id==SEARCH_RESET)&&code==BN_CLICKED){
             const int preservedId=selectedId();
             const std::wstring draft=getText(inputControl);
@@ -1210,7 +1290,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int showCommand){
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"FootballUniverseDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     wc.hbrBackground=backgroundBrush;RegisterClassExW(&wc);
-    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.15.0 — расширенная футбольная вселенная",
+    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.16.0 — расширенная футбольная вселенная",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,840,nullptr,nullptr,instance,nullptr);
     if(!window){MessageBoxW(nullptr,L"Не удалось создать окно",L"Ошибка",MB_ICONERROR);return 1;}
     trace("window CREATED");ShowWindow(window,showCommand);trace("window SHOWN");UpdateWindow(window);trace("window UPDATED");

@@ -38,8 +38,8 @@ function Check-Layout([IntPtr]$win,[int]$page,[string]$size){
   [FootballWindow]::ClientToScreen($win,[ref]$origin)|Out-Null
   $left=$origin.X;$top=$origin.Y;$right=$left+$client.Right;$bottom=$top+$client.Bottom
   $controls=@(@{name='text';h=$content},@{name='list';h=$list},@{name='input';h=$input},@{name='pitch';h=$pitch})
-  if($page -eq 6){
-    foreach($id in @(700,701,702,703,704,705,706)){$controls+=@{name="filter$id";h=[FootballWindow]::GetDlgItem($win,$id)}}
+  if($page -eq 6 -or $page -eq 21){
+    foreach($id in @(700,701,702,703,704,705,706,707)){$controls+=@{name="filter$id";h=[FootballWindow]::GetDlgItem($win,$id)}}
   }
   $visible=@()
   foreach($entry in $controls){
@@ -80,12 +80,12 @@ try{
       throw 'Could not resize game'
     }
     Start-Sleep -Milliseconds 100
-    foreach($page in 0..20){
+    foreach($page in 0..21){
       [FootballWindow]::SendMessage($hwnd,0x111,[IntPtr](100+$page),[IntPtr]::Zero)|Out-Null
       Check-Layout $hwnd $page "$width x $height"
     }
   }
-  Write-Host 'PASS: 21 screens x 3 sizes, including market filters and pitch; no text-panel overlap'
+  Write-Host 'PASS: 22 screens x 3 sizes, including market filters and pitch; no text-panel overlap'
 }finally{
   $proc.Refresh()
   if(-not $proc.HasExited){Stop-Process -Id $proc.Id -Force}
