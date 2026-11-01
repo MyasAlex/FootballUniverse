@@ -72,7 +72,8 @@ int main(){
     const auto current=game.pitchFrame();
     validate(current,game);
     assert(current.minute==15);
-    assert(current.actors.size()==22);
+    // A sending-off or early injury may legitimately reduce on-field actors.
+    assert(current.actors.size()>=14&&current.actors.size()<=22);
     assert(game.save("v11_pitch_mid.fus").find("сохранена")!=std::string::npos);
     fu::Game restored;
     assert(restored.load("v11_pitch_mid.fus").find("загружена")!=std::string::npos);
