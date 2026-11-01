@@ -1157,7 +1157,7 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     }
     case WM_ERASEBKGND:{
         RECT rect;GetClientRect(hwnd,&rect);FillRect(HDC(w),&rect,backgroundBrush);
-        RECT sidebar={0,0,std::clamp(rect.right/5,165,215),rect.bottom};HBRUSH brush=CreateSolidBrush(RGB(10,17,29));FillRect(HDC(w),&sidebar,brush);DeleteObject(brush);return 1;
+        RECT sidebar={0,0,std::clamp(int(rect.right)/5,165,215),rect.bottom};HBRUSH brush=CreateSolidBrush(RGB(10,17,29));FillRect(HDC(w),&sidebar,brush);DeleteObject(brush);return 1;
     }
     case WM_CLOSE:DestroyWindow(hwnd);return 0;
     case WM_DESTROY:KillTimer(hwnd,PITCH_TIMER);PostQuitMessage(0);return 0;
