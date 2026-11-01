@@ -73,7 +73,8 @@ std::vector<int> activeNavigation;
 int lastListIndex=0;
 std::wstring detailText;
 const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Карьера тренера"};
-const int NAV_START=100, ACTION_START=300, LIST_ID=501, SETUP_START=600, SETUP_LOAD=601, SETUP_CLUB=602, SETUP_LEAGUES=603;
+const int NAV_START=100, ACTION_START=300, LIST_ID=501, SETUP_START=600,
+          SETUP_LOAD=601, SETUP_CLUB=602, SETUP_LEAGUES=603, SETUP_ROLE=611;
 std::string saveFile="career.fus";
 
 std::wstring wide(const std::string& s){
@@ -659,6 +660,29 @@ void showPage(int next){
     InvalidateRect(pitchWindow,nullptr,TRUE);
     InvalidateRect(clubLogoWindow,nullptr,TRUE);
 }
+void updateSetupHelp(){
+    if(!setupRole||!setupHelp)return;
+    const int role=int(SendMessageW(setupRole,CB_GETCURSEL,0,0));
+    static const wchar_t* descriptions[]={
+        L"ГЛАВНЫЙ ТРЕНЕР\r\n"
+        L"Состав, матчи, тактика, тренировки и разговоры.\r\n"
+        L"Может предлагать трансферы, но не утверждает финансы.",
+        L"СПОРТИВНЫЙ ДИРЕКТОР\r\n"
+        L"Покупки, продажи, аренды, контракты и скаутинг.\r\n"
+        L"Матчи смотрит, но не командует игроками на поле.",
+        L"ВЛАДЕЛЕЦ\r\n"
+        L"Крупные вложения в стадион, базу и академию.\r\n"
+        L"Не занимается тактикой, трансферами и билетами.",
+        L"ПРЕЗИДЕНТ\r\n"
+        L"Спонсоры, билеты, болельщики и коммерция.\r\n"
+        L"Не управляет составом, трансферами и инвестициями владельца.",
+        L"ПЕСОЧНИЦА\r\n"
+        L"Все полномочия: тренер, директор, владелец и президент.\r\n"
+        L"Ограничения других ролей отключены."
+    };
+    SetWindowTextW(setupHelp,descriptions[std::clamp(role,0,4)]);
+    InvalidateRect(setupHelp,nullptr,TRUE);
+}
 void showSetup(){
     trace("showSetup BEGIN");
     autoPlayMatch=false;
@@ -681,7 +705,7 @@ void showSetup(){
     SendMessageW(setupLeagues,LB_RESETCONTENT,0,0);
     for(const auto& l:game().leagues())SendMessageW(setupLeagues,LB_ADDSTRING,0,LPARAM(wide(l.country+" — "+l.name).c_str()));
     for(int i=0;i<6;++i)SendMessageW(setupLeagues,LB_SETSEL,i<2,i);
-    SetWindowTextW(setupHelp,L"Укажите имя, клуб, должность, сложность.\nВ списке справа отметьте активные лиги (Ctrl/Shift не нужны).\nЛига выбранного клуба включится автоматически.");
+    updateSetupHelp();
     tell("Демо-база: известные клубы, процедурные игроки. Полная лицензированная база ещё не добавлена.");
     trace("showSetup before arrange");show(clubLogoWindow,true);arrange();InvalidateRect(clubLogoWindow,nullptr,TRUE);trace("showSetup END");
 }
@@ -929,7 +953,7 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         clubLogoWindow=CreateWindowExW(0,L"FU_ClubLogo",L"",WS_CHILD|WS_VISIBLE,0,0,10,10,hwnd,nullptr,appInstance,nullptr);
         setupName=create(L"EDIT",L"",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,610,WS_EX_CLIENTEDGE);
         setupClub=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,SETUP_CLUB);
-        setupRole=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,611);
+        setupRole=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,SETUP_ROLE);
         setupDifficulty=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,612);
         setupLeagues=create(L"LISTBOX",L"",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_MULTIPLESEL|LBS_NOINTEGRALHEIGHT,SETUP_LEAGUES,WS_EX_CLIENTEDGE);
         setupHelp=create(L"STATIC",L"",WS_CHILD|WS_VISIBLE|SS_LEFT);
@@ -983,6 +1007,7 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         if(id>=ACTION_START&&id<ACTION_START+6&&code==BN_CLICKED){trigger(id-ACTION_START);return 0;}
         if(id==LIST_ID&&code==LBN_SELCHANGE){lastListIndex=int(SendMessageW(listControl,LB_GETCURSEL,0,0));detailForSelected();return 0;}
         if(id==SETUP_CLUB&&code==CBN_SELCHANGE){InvalidateRect(clubLogoWindow,nullptr,TRUE);return 0;}
+        if(id==SETUP_ROLE&&code==CBN_SELCHANGE){updateSetupHelp();return 0;}
         if(id==SETUP_START&&code==BN_CLICKED){startCareer();return 0;}
         if(id==SETUP_LOAD&&code==BN_CLICKED){
             std::string result=game().load(saveFile);
