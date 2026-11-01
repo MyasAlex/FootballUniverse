@@ -4,6 +4,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -2784,6 +2785,7 @@ std::string Game::talk(int playerId,const std::string& phrase){
     return status_;
 }
 std::string Game::speakToFans(const std::string& phrase){
+    if(!canCommercial())return status_="Официальные обращения к болельщикам готовит президент клуба.";
     if(phrase.empty()){status_="Введите обращение к болельщикам.";return status_;}
     std::string t=lowerForSearch(phrase),reaction;
     if(anyWords(t,{"спасибо","поддерж","уваж","вместе"})){
