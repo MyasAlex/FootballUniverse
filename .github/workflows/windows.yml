@@ -48,12 +48,12 @@ jobs:
           start "" "FootballUniverse.exe"
           '@ | Set-Content "$folder/PLAY.bat" -Encoding Ascii
           @'
-          Football Universe 0.14.2 - Windows x64
+          Football Universe 0.15.0 - Windows x64
           Run PLAY.bat or FootballUniverse.exe.
           C++ and Visual Studio are NOT required to run.
           Save files (career.fus) remain in the game folder if started through PLAY.bat.
-          Includes match assistant, adaptive AI coaches, tactical changes and detailed analysis.
-          Save files from v0.14 (FUSAVE_13) can be loaded; new saves use FUSAVE_14.
+          Includes AI bench decisions, advanced tactical instructions, performance analytics and club board objectives.
+          Save files from v0.14 (FUSAVE_13) can be loaded; new saves use FUSAVE_15.
           Back up your original career.fus before installing.
           Windows GUI launch, UI panel layout and game-engine tests are checked in CI.
           '@ | Set-Content "$folder/READ_FIRST.txt" -Encoding UTF8

@@ -30,6 +30,7 @@ struct Club {
     int ticket=25, sponsorship=250000, wins=0, draws=0, losses=0, gf=0, ga=0, points=0;
     int formation=0, tactic=1, training=1;
     int pressing=1, tempo=1, width=1; // 0 low, 1 balanced, 2 high
+    int defensiveLine=1, attackingRisk=1, setPieces=1; // 0 cautious, 1 balanced, 2 aggressive
     int captainId=-1, viceCaptainId=-1;
 };
 // systemId identifies one country pyramid; tier: 0 top, 1 second division.
@@ -127,6 +128,7 @@ struct LiveMatch {
     // The live ball belongs to a real player. Text and pitch use this shared state.
     bool possessionHome=true;
     int ballCarrierId=-1, previousCarrierId=-1, attackPhase=0, lastAction=0;
+    int momentumH=0; // -100 away dominance .. 100 home dominance
     std::vector<MatchPlayerStat> playerStats;
 };
 
@@ -224,6 +226,13 @@ public:
     TacticalPlan recommendedMatchPlan() const;
     std::string applyMatchPlan(TacticalPlan plan);
     std::string tacticsText() const;
+    std::string analyticsText() const;
+    std::string boardReportText() const;
+    std::string requestBoardInvestment();
+    std::string changeDefensiveLine();
+    std::string changeAttackingRisk();
+    std::string changeSetPieces();
+    std::string planTrainingWeek();
     std::string financesText() const;
     std::string matchText() const;
     std::string liveMatchAdviceText() const;
@@ -284,6 +293,7 @@ private:
     std::vector<CoachRecord> coaches_;
     JobApplication job_;
     int reputation_=55;
+    int lastBoardRequestSeason_=-1;
     std::vector<Message> inbox_;
     std::vector<ScoutReport> scouts_;
     std::vector<TransferDeal> deals_;
@@ -335,6 +345,7 @@ private:
     void dailyTick();
     int rating(const Club& club) const;
     void playMinute(LiveMatch& match, bool detailed);
+    void manageOpponentSubstitutions(LiveMatch& live);
     void finalizeRatings(LiveMatch& match);
     void applyMatchDiscipline(const Match& match);
     MatchPlayerStat* statFor(LiveMatch& match,int playerId);

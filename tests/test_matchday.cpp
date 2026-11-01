@@ -61,7 +61,7 @@ int main(){
     while(loaded.hasLiveMatch())assert(loaded.stepLiveMatch(15));
     const auto& match=loaded.matches().at(id);
     assert(match.played);
-    assert(match.playerStats.size()==22);
+    assert(match.playerStats.size()>=22);
     assert(match.passesH+match.passesA>0);
     assert(match.completedH<=match.passesH);
     assert(match.completedA<=match.passesA);
@@ -94,7 +94,7 @@ int main(){
     fu::Game restored;
     assert(restored.load("v10_postmatch.fus").find("загружена")!=std::string::npos);
     assert(!restored.hasLiveMatch());
-    assert(restored.matches().at(id).playerStats.size()==22);
+    assert(restored.matches().at(id).playerStats.size()>=22);
     assert(restored.latestMatchReport()==loaded.latestMatchReport());
     assert(restored.findPlayer(offender)->suspension==2);
     assert(restored.myClub().pressing==2);
