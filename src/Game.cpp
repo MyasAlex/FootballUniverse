@@ -3338,30 +3338,132 @@ std::string Game::load(const std::string& path){
     status_="Карьера загружена: "+path;
     return status_;
 }
-bool Game::importPlayers(const std::string& path){
-    std::ifstream f(path);if(!f)return false;
-    std::string line;int imported=0;
-    while(std::getline(f,line)){
-        if(line.empty()||line[0]=='#'||line.find("club_id;")==0)continue;
-        std::vector<std::string> v;std::stringstream s(line);std::string token;
-        while(std::getline(s,token,';'))v.push_back(token);
-        if(v.size()<15)continue;
-        try{
-            int club=std::stoi(v[0]);if(club<0||club>=int(clubs_.size()))continue;
-            int age=std::stoi(v[3]);if(age<15||age>50)continue;
-            Player p;p.id=nextPlayerId_++;p.club=club;p.name=v[1];p.position=v[2];p.age=age;
-            for(int k=0;k<10;++k)p.skill[k]=clamp(std::stoi(v[4+k]));
-            p.potential=clamp(std::stoi(v[14]));
-            p.personality="Профессионал";p.wage=4000;p.value=1000000;p.contractYear=season_+3;
-            // Replace one procedurally generated player in that club with the same position if available.
-            auto it=std::find_if(players_.begin(),players_.end(),[&](const Player& q){return q.club==club&&q.position==p.position;});
-            if(it!=players_.end())players_.erase(it);
-            players_.push_back(std::move(p));imported++;
-        }catch(...){continue;}
-    }
-    for(const auto& c:clubs_)pickLineup(c.id);
-    status_="Импортировано футболистов: "+std::to_string(imported);
-    if(imported>0)addMessage("База данных обновлена",status_);
-    return imported>0;
+int Game::realPlayerCount(int clubId)const{
+    int count=0;
+    for(const auto& player:players_)
+        if(!player.sourceQid.empty()&&(clubId<0||player.club==clubId))++count;
+    return count;
 }
+bool Game::importPlayers(const std::string& path){
+    if(hasLiveMatch()||totalDays_>0){
+        status_="Импорт базы доступен только в начале новой карьеры, до первого игрового дня.";
+        return false;
+    }
+    std::ifstream file(path,std::ios::binary);
+    if(!file){status_="Файл игроков не найден: "+path;return false;}
+    std::string line;
+    if(!std::getline(file,line)){status_="Файл базы пуст.";return false;}
+    if(line.size()>=3&&static_cast<unsigned char>(line[0])==0xEF&&
+       static_cast<unsigned char>(line[1])==0xBB&&
+       static_cast<unsigned char>(line[2])==0xBF)line.erase(0,3);
+    const bool realFormat=line.find("wikidata_qid")!=std::string::npos&&
+                          line.find("birth_date")!=std::string::npos;
+    int imported=0;
+    if(realFormat){
+        std::unordered_set<std::string> seenQids;
+        for(const auto& player:players_)if(!player.sourceQid.empty())
+            seenQids.insert(player.sourceQid);
+        std::unordered_set<int> chosenSlots;
+        auto groupOf=[](const std::string& pos){
+            return positionGroup(pos);
+        };
+        while(std::getline(file,line)){
+            if(line.empty()||line[0]=='#'||line.size()>1200)continue;
+            std::vector<std::string> fields;
+            std::istringstream stream(line);
+            std::string token;
+            while(std::getline(stream,token,';'))fields.push_back(token);
+            if(fields.size()!=5)continue;
+            try{
+                const int club=std::stoi(fields[0]);
+                // Exactly the 36 licensed top-division club identities, never
+                // infer player memberships for our 36 fictional second-tier clubs.
+                if(club<0||club>=36||club>=int(clubs_.size()))continue;
+                const std::string& qid=fields[1];
+                const std::string& name=fields[2];
+                const std::string& pos=fields[3];
+                const std::string& dob=fields[4];
+                if(qid.size()<2||qid[0]!='Q'||qid.size()>16||
+                   !std::all_of(qid.begin()+1,qid.end(),[](unsigned char c){
+                       return c>='0'&&c<='9';
+                   })||name.size()<3||name.size()>120||
+                   name.find('\r')!=std::string::npos||
+                   !seenQids.insert(qid).second)
+                    continue;
+                if(pos!="GK"&&pos!="DC"&&pos!="DL"&&pos!="DR"&&
+                   pos!="MC"&&pos!="DMC"&&pos!="AMC"&&pos!="AMR"&&
+                   pos!="AML"&&pos!="ST")
+                    continue;
+                if(dob.size()!=10||dob[4]!='-'||dob[7]!='-')continue;
+                const int year=std::stoi(dob.substr(0,4));
+                const int month=std::stoi(dob.substr(5,2));
+                const int day=std::stoi(dob.substr(8,2));
+                if(year<1979||year>2010||month<1||month>12||day<1||day>31)
+                    continue;
+                int age=season_-year-(month>8||(month==8&&day>1)?1:0);
+                if(age<16||age>46)continue;
+                // Reuse procedural slots/IDs; this preserves match references and
+                // gives a full 24-person roster even if Wikimedia lacks some names.
+                Player* slot=nullptr;
+                for(auto& p:players_)if(p.club==club&&p.sourceQid.empty()&&
+                    !chosenSlots.count(p.id)&&groupOf(p.position)==groupOf(pos)){
+                    slot=&p;break;
+                }
+                if(!slot){
+                    for(auto& p:players_)if(p.club==club&&p.sourceQid.empty()&&
+                        !chosenSlots.count(p.id)){slot=&p;break;}
+                }
+                if(!slot)continue;
+                chosenSlots.insert(slot->id);
+                slot->name=name;
+                slot->position=pos;
+                slot->age=age;
+                slot->sourceQid=qid;
+                slot->potential=clamp(std::max(slot->potential,
+                   playerRating(*slot)+std::max(0,27-age)/3),20,99);
+                ++imported;
+            }catch(...){continue;}
+        }
+    }else{
+        // Backwards-compatible, user-editable 15-column custom player format.
+        file.clear();
+        file.seekg(0);
+        while(std::getline(file,line)){
+            if(line.empty()||line[0]=='#'||line.find("club_id;")==0)continue;
+            std::vector<std::string> v;std::stringstream stream(line);std::string token;
+            while(std::getline(stream,token,';'))v.push_back(token);
+            if(v.size()<15)continue;
+            try{
+                int club=std::stoi(v[0]);if(club<0||club>=int(clubs_.size()))continue;
+                int age=std::stoi(v[3]);if(age<15||age>50)continue;
+                Player p;p.id=nextPlayerId_++;p.club=club;p.name=v[1];p.position=v[2];p.age=age;
+                if(p.name.size()<3||p.name.size()>120)continue;
+                for(int k=0;k<10;++k)p.skill[k]=clamp(std::stoi(v[4+k]));
+                p.potential=clamp(std::stoi(v[14]));
+                p.personality="Профессионал";p.wage=4000;
+                p.value=1000000;p.contractYear=season_+3;
+                auto it=std::find_if(players_.begin(),players_.end(),
+                    [&](const Player& q){return q.club==club&&
+                        q.position==p.position&&q.sourceQid.empty();});
+                if(it!=players_.end())players_.erase(it);
+                players_.push_back(std::move(p));++imported;
+            }catch(...){continue;}
+        }
+    }
+    if(imported>0){
+        autoAssignCaptains();
+        for(const auto& club:clubs_)pickLineup(club.id);
+        status_="Импортировано настоящих футболистов: "+std::to_string(imported)+
+                " (Wikidata), остальные игроки — сгенерированы.";
+        if(!realFormat)
+            status_="Импортировано футболистов из пользовательского CSV: "+
+                    std::to_string(imported);
+        addMessage("База данных футболистов",status_);
+        return true;
+    }
+    status_="Не удалось импортировать записи из "+path+
+            ". Проверьте формат и соответствие клубов.";
+    return false;
+}
+
 } // namespace fu
