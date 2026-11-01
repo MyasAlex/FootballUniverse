@@ -2984,7 +2984,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_13\n";
+    f<<"FUSAVE_12_FLOW1\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -3112,15 +3112,15 @@ std::string Game::load(const std::string& path){
     std::string header;std::getline(f,header);
     if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
-    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
-    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
-    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
-    const bool version9=(header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
-    const bool version10=(header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
-    const bool version11=(header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
-    const bool version12=(header=="FUSAVE_12"||header=="FUSAVE_13");
-    const bool version13=(header=="FUSAVE_13");
+    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
+    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
+    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
+    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
+    const bool version9=(header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
+    const bool version10=(header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
+    const bool version11=(header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
+    const bool version12=(header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
+    const bool versionMatchFlow=(header=="FUSAVE_12_FLOW1");
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
@@ -3297,7 +3297,7 @@ std::string Game::load(const std::string& path){
                    live.foulsH<0||live.foulsA<0||
                    live.cornersH<0||live.cornersA<0)
                     throw std::runtime_error("Промежуточные показатели матча");
-                if(version13){
+                if(versionMatchFlow){
                     if(!(f>>live.possessionHome>>live.ballCarrierId>>
                          live.previousCarrierId>>live.attackPhase>>live.lastAction)||
                        live.attackPhase<0||live.attackPhase>3||
