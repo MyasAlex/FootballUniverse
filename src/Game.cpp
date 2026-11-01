@@ -336,9 +336,12 @@ PitchFrame Game::pitchFrame()const{
             const int index=used[group]++;
             const int baseX=group==0?72:group==1?255:group==2?490:745;
             const int baseY=lanes[group][index%7];
-            const int motionX=((frame.minute*7+id*13+team*29)%71)-35;
-            const int motionY=((frame.minute*9+id*17+team*19)%65)-32;
-            const int adjustedX=std::clamp(baseX+side*(motionX+(frame.minute%25-12)),35,965);
+            // Smooth, bounded movement. Old modulo offsets jumped 60+ pixels
+            // when their counter wrapped, making players teleport.
+            const double tick=double(frame.minute);
+            const int motionX=int(std::lround(20.0*std::sin(tick*0.22+id*0.41+team)));
+            const int motionY=int(std::lround(18.0*std::sin(tick*0.18+id*0.63+team*0.5)));
+            const int adjustedX=std::clamp(baseX+side*motionX,35,965);
             frame.actors.push_back({id,team,team==0?adjustedX:1000-adjustedX,
                                      std::clamp(baseY+motionY,45,655)});
         }
@@ -358,11 +361,11 @@ PitchFrame Game::pitchFrame()const{
             }
         }
     }
-    bool homePossesses=(frame.minute*13+frame.homeGoals*19+frame.awayGoals*7)%100<54;
-    if(hasLiveMatch()&&live_.minute>0){
-        const int chance=(live_.possessionTicksH*100)/live_.minute;
-        homePossesses=(frame.minute*13+live_.passesH/4)%100<chance;
-    }
+    // A possession is a multi-minute build-up progressing through the thirds.
+    // Previous implementation randomly selected a distant carrier EACH minute,
+    // making the ball appear at an unrelated location with no visible pass.
+    const int phase=frame.minute%10;
+    bool homePossesses=(frame.minute/10)%2==0;
     if(!event.empty()){
         if(event.rfind(clubs_[frame.homeClub].name+":",0)==0)homePossesses=true;
         else if(event.rfind(clubs_[frame.awayClub].name+":",0)==0)homePossesses=false;
@@ -371,7 +374,19 @@ PitchFrame Game::pitchFrame()const{
     std::vector<const PitchActor*> attack;
     for(const auto& actor:frame.actors)if(actor.team==team)attack.push_back(&actor);
     if(attack.empty())return frame;
-    const PitchActor* owner=attack[(frame.minute*7+frame.homeGoals+frame.awayGoals)%attack.size()];
+    const int targetX=homePossesses?200+phase*70:800-phase*70;
+    const int targetY=350+int(std::lround(115.0*std::sin(double(frame.minute)*0.32)));
+    auto nearTarget=[&](int x,int y)->const PitchActor*{
+        const PitchActor* result=attack.front();
+        int closest=std::numeric_limits<int>::max();
+        for(const auto* actor:attack){
+            const int dx=actor->x-x,dy=actor->y-y;
+            const int distance=dx*dx+(dy*dy)/2;
+            if(distance<closest){closest=distance;result=actor;}
+        }
+        return result;
+    };
+    const PitchActor* owner=nearTarget(targetX,targetY);
     const PitchActor* provider=nullptr;
     if(!event.empty()){
         for(const auto* actor:attack){
@@ -385,25 +400,20 @@ PitchFrame Game::pitchFrame()const{
             else if(!provider)provider=actor;
         }
     }
-    if(provider&&provider!=owner)receiver=owner->playerId;
+    if(provider&&provider!=owner)frame.receiverId=owner->playerId;
     frame.carrierId=owner->playerId;
-    frame.receiverId=receiver;
     frame.ballFromX=provider&&provider!=owner?provider->x:owner->x;
     frame.ballFromY=provider&&provider!=owner?provider->y:owner->y;
-    frame.ballX=owner->x;frame.ballY=owner->y;
+    frame.ballX=owner->x;
+    frame.ballY=owner->y;
     frame.highlight=event;
     if(event.find("ГОЛ!")!=std::string::npos){
         frame.action=3;frame.ballX=homePossesses?965:35;frame.ballY=350;
     }else if(event.find("пробил.")!=std::string::npos){
         frame.action=2;frame.ballX=homePossesses?920:80;
         frame.ballY=350+(owner->y-350)/3;
-    }else if(provider&&provider!=owner){
-        frame.action=1;
     }else{
-        frame.action=0;
-        // Small change between two positions gives the ball a readable movement path.
-        frame.ballFromX=std::clamp(owner->x+(team==0?-65:65),40,960);
-        frame.ballFromY=std::clamp(owner->y+((frame.minute%3)-1)*55,40,660);
+        frame.action=1; // Nearby recipient or dribble along the attacking phase.
     }
     return frame;
 }
