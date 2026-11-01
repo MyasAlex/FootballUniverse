@@ -1512,7 +1512,7 @@ std::string Game::newsText()const{
     return o.str();
 }
 std::string Game::helpText()const{
-    return "FOOTBALL UNIVERSE 0.14 / ПРОТОТИП\n\n"
+    return "FOOTBALL UNIVERSE 0.14.2 / ПРОТОТИП\n\n"
     "Это самостоятельная C++-игра с текстовым и 2D-отображением матча.\n"
     "Календарь и кубки: вкладка «Архив» показывает матчи, сетку кубков и историю чемпионов.\n"
     "В шести странах: национальные кубки из 6 клубов, один международный кубок из 8.\n"
@@ -1784,8 +1784,28 @@ void Game::playMinute(LiveMatch& live,bool detailed){
         for(int id:xi)if(const auto* p=findPlayer(id)){sum+=p->fitness;++count;}
         return count?sum/count:0;
     };
-    const auto homePlan=evaluateTactics(h,a,averageFitness(live.homeXI));
-    const auto awayPlan=evaluateTactics(a,h,averageFitness(live.awayXI));
+    const int fitnessH=averageFitness(live.homeXI);
+    const int fitnessA=averageFitness(live.awayXI);
+    const bool managedHome=m.home==teamId_&&permissionCoaching();
+    const bool managedAway=m.away==teamId_&&permissionCoaching();
+    const Club homeInstructions=managedHome?h:
+        adaptiveAITactics(h,live.minute,live.goalsH-live.goalsA,fitnessH);
+    const Club awayInstructions=managedAway?a:
+        adaptiveAITactics(a,live.minute,live.goalsA-live.goalsH,fitnessA);
+    const auto homePlan=evaluateTactics(homeInstructions,awayInstructions,fitnessH);
+    const auto awayPlan=evaluateTactics(awayInstructions,homeInstructions,fitnessA);
+    if(detailed&&(live.minute==60||live.minute==75)){
+        auto describe=[&](const Club& original,const Club& instructions,int goalDifference){
+            if(original.tactic==instructions.tactic&&original.pressing==instructions.pressing&&
+               original.tempo==instructions.tempo&&original.width==instructions.width)return;
+            live.events.push_back({live.minute,original.name+": тренер меняет план — "+
+                (goalDifference>0?"удержание преимущества и низкий блок.":
+                 instructions.pressing==2?"высокий прессинг, больше игроков в атаке.":
+                 "быстрые контратаки без лишнего прессинга.")});
+        };
+        if(!managedHome)describe(h,homeInstructions,live.goalsH-live.goalsA);
+        if(!managedAway)describe(a,awayInstructions,live.goalsA-live.goalsH);
+    }
     const int initiative=std::clamp(52+(strengthH-strengthA)*2+
         homePlan.possession-awayPlan.possession,17,83);
     // A possession survives minute boundaries. Only a turnover, a shot or
@@ -1797,8 +1817,8 @@ void Game::playMinute(LiveMatch& live,bool detailed){
     const bool home=live.possessionHome;
     if(home)++live.possessionTicksH;
     const int attackingId=home?m.home:m.away;
-    const Club& attacking=clubs_[attackingId];
-    const Club& defending=clubs_[home?m.away:m.home];
+    const Club& attacking=home?homeInstructions:awayInstructions;
+    const Club& defending=home?awayInstructions:homeInstructions;
     const auto& plan=home?homePlan:awayPlan;
     const auto& teamXI=home?live.homeXI:live.awayXI;
     const auto& defenceXI=home?live.awayXI:live.homeXI;
@@ -1978,7 +1998,7 @@ void Game::playMinute(LiveMatch& live,bool detailed){
             }
         }
     };
-    fatigue(live.homeXI,h);fatigue(live.awayXI,a);
+    fatigue(live.homeXI,homeInstructions);fatigue(live.awayXI,awayInstructions);
 }
 void Game::finishMatch(LiveMatch& live){
     Match& m=matches_.at(live.id);
@@ -2148,6 +2168,70 @@ bool Game::instantMatch(){
     sim.events.push_back({90,"Финальный свисток!"});
     finishMatch(sim);simulateOtherMatches();status_="Мгновенная симуляция завершена";return true;
 }
+std::string Game::liveMatchAdviceText()const{
+    if(!hasLiveMatch()||live_.id<0||live_.id>=int(matches_.size()))
+        return "ПОМОЩНИК ТРЕНЕРА\nСовет станет доступен после начала матча.\n";
+    const auto& match=matches_[live_.id];
+    const bool home=match.home==teamId_;
+    const auto& xi=home?live_.homeXI:live_.awayXI;
+    int totalFitness=0,count=0;
+    for(int id:xi)if(const Player* player=findPlayer(id)){
+        totalFitness+=player->fitness;++count;
+    }
+    const MatchSituation situation={live_.minute,
+        home?live_.goalsH-live_.goalsA:live_.goalsA-live_.goalsH,
+        home?live_.shotsH:live_.shotsA,home?live_.shotsA:live_.shotsH,
+        home?live_.xgH:live_.xgA,home?live_.xgA:live_.xgH,
+        live_.minute?(home?live_.possessionTicksH*100/live_.minute:
+                               100-live_.possessionTicksH*100/live_.minute):50,
+        count?totalFitness/count:0};
+    const auto advice=adviseLiveTactics(situation);
+    std::ostringstream out;
+    out<<"ПОМОЩНИК ТРЕНЕРА ("<<live_.minute<<"')\n"
+       <<"Наши удары: "<<situation.shotsFor<<" / "<<situation.shotsAgainst
+       <<" | xG: "<<std::fixed<<std::setprecision(2)<<situation.xgFor/100.0
+       <<" / "<<situation.xgAgainst/100.0<<"\n"
+       <<"Владение: "<<situation.possessionPercent<<"% | силы основы: "
+       <<situation.averageFitness<<"/100\n"
+       <<"Рекомендация: "<<tacticalPlanName(advice.plan)<<".\n"
+       <<advice.reason<<"\n";
+    if(permissionCoaching())out<<"Кнопка «Применить совет» меняет только тактику, "
+        "не состав и не счёт.\n";
+    else out<<"Тактикой управляет назначенный тренер: у этой должности нет права изменить план.\n";
+    return out.str();
+}
+
+std::string Game::applyLiveMatchAdvice(){
+    if(!hasLiveMatch())return status_="Сначала начните интерактивный матч.";
+    if(!permissionCoaching())return status_="Нет полномочий менять тактику во время матча.";
+    const auto& match=matches_[live_.id];
+    const bool home=match.home==teamId_;
+    const auto& xi=home?live_.homeXI:live_.awayXI;
+    int fitness=0,count=0;
+    for(int id:xi)if(const auto* player=findPlayer(id)){
+        fitness+=player->fitness;++count;
+    }
+    const MatchSituation situation={live_.minute,
+        home?live_.goalsH-live_.goalsA:live_.goalsA-live_.goalsH,
+        home?live_.shotsH:live_.shotsA,home?live_.shotsA:live_.shotsH,
+        home?live_.xgH:live_.xgA,home?live_.xgA:live_.xgH,
+        live_.minute?(home?live_.possessionTicksH*100/live_.minute:
+                               100-live_.possessionTicksH*100/live_.minute):50,
+        count?fitness/count:0};
+    const auto plan=adviseLiveTactics(situation).plan;
+    const int originalTactic=myClub().tactic;
+    const int originalPress=myClub().pressing;
+    const int originalTempo=myClub().tempo;
+    const int originalWidth=myClub().width;
+    const auto result=applyMatchPlan(plan);
+    if(originalTactic!=myClub().tactic||originalPress!=myClub().pressing||
+       originalTempo!=myClub().tempo||originalWidth!=myClub().width){
+        live_.events.push_back({live_.minute,myClub().name+
+            ": тренер применил совет штаба — «"+tacticalPlanName(plan)+"»."});
+    }
+    return result;
+}
+
 std::string Game::matchText()const{
     std::ostringstream o;
     if(hasLiveMatch()){
@@ -2165,7 +2249,8 @@ std::string Game::matchText()const{
         o<<"Фолы: "<<l.foulsH<<" — "<<l.foulsA
          <<" | угловые: "<<l.cornersH<<" — "<<l.cornersA<<"\n";
         o<<"Тактика: "<<tactics[myClub().tactic]<<"\n";
-        o<<"Замены: "<<(m.home==teamId_?l.subsH:l.subsA)<<"/5\n";
+        o<<"Замены: "<<(m.home==teamId_?l.subsH:l.subsA)<<"/5\n\n";
+        o<<liveMatchAdviceText()<<"\n";
         o<<"\nНА ПОЛЕ (ID): ";
         for(int id:(m.home==teamId_?l.homeXI:l.awayXI))o<<id<<" ";
         o<<"\nВыберите запасного слева, введите ID футболиста с поля\n";
@@ -2210,6 +2295,24 @@ std::string renderMatchReport(const Match& m,const std::vector<Club>& clubs,
        <<m.completedA<<"/"<<m.passesA<<"\n";
     out<<"Фолы: "<<m.foulsH<<" — "<<m.foulsA
        <<" | Угловые: "<<m.cornersH<<" — "<<m.cornersA<<"\n";
+    out<<"\nАНАЛИЗ ИГРЫ\n";
+    const auto rate=[](int complete,int total){
+        return total>0?std::clamp(complete*100/total,0,100):0;
+    };
+    out<<"Точность паса: "<<rate(m.completedH,m.passesH)<<"% — "
+       <<rate(m.completedA,m.passesA)<<"%\n";
+    out<<"Качество момента (xG/удар): "<<std::fixed<<std::setprecision(2)
+       <<(m.shotsH?double(m.xgH)/100/m.shotsH:0.)<<" — "
+       <<(m.shotsA?double(m.xgA)/100/m.shotsA:0.)<<"\n";
+    out<<"Реализация относительно xG: "<<std::showpos<<std::fixed<<std::setprecision(2)
+       <<(m.homeGoals-double(m.xgH)/100)<<" — "
+       <<(m.awayGoals-double(m.xgA)/100)<<std::noshowpos<<" гола\n";
+    if(m.xgH>=m.xgA+100)out<<clubs[m.home].name
+        <<": заметное преимущество по качеству моментов, даже если счёт иной.\n";
+    else if(m.xgA>=m.xgH+100)out<<clubs[m.away].name
+        <<": заметное преимущество по качеству моментов, даже если счёт иной.\n";
+    else out<<"По качеству созданных моментов команды были близки.\n";
+    out<<"xG и разница с голами — оценка моментов, не доказательство везения или преимущества тактики.\n";
     if(!m.playerStats.empty()){
         std::vector<const MatchPlayerStat*> ranking;
         for(const auto& p:m.playerStats)ranking.push_back(&p);

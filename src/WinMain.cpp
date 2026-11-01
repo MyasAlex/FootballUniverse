@@ -717,6 +717,7 @@ void showPage(int next){
     if(page==6)SetWindowTextW(actions[3],shortlistOnly?L"Все игроки":L"Короткий список");
     if(page==4){
         SetWindowTextW(actions[0],game().hasLiveMatch()?L"+15 минут":L"Начать матч");
+        SetWindowTextW(actions[3],game().hasLiveMatch()?L"Применить совет":L"Сменить тактику");
         SetWindowTextW(actions[1],autoPlayMatch?L"⏸ Пауза":L"▶ Авто");
         updatePitchFrame();
     }
@@ -871,7 +872,10 @@ void trigger(int action){
             if(game().hasLiveMatch())game().stepLiveMatch(90);
             else game().instantMatch();
         }
-        if(action==3)game().changeTactic();
+        if(action==3){
+            if(game().hasLiveMatch())response=game().applyLiveMatchAdvice();
+            else game().changeTactic();
+        }
         if(action==4)showPitch=!showPitch;
         if(action==5){
             try{response=game().substitute(std::stoi(text),id);}
@@ -1184,7 +1188,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int showCommand){
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"FootballUniverseDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     wc.hbrBackground=backgroundBrush;RegisterClassExW(&wc);
-    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.14.1 — живая футбольная вселенная",
+    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.14.2 — живая футбольная вселенная",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,840,nullptr,nullptr,instance,nullptr);
     if(!window){MessageBoxW(nullptr,L"Не удалось создать окно",L"Ошибка",MB_ICONERROR);return 1;}
     trace("window CREATED");ShowWindow(window,showCommand);trace("window SHOWN");UpdateWindow(window);trace("window UPDATED");

@@ -235,6 +235,7 @@ std::string Game::preparationText()const{
     }
     out<<"Ждём ответ: "<<awaiting<<"; требуют решения: "<<actionable<<"\n";
     if(actionable)out<<"ДЕЙСТВИЕ: откройте «Трансферы» и ответьте на условия клуба или агента до истечения срока.\n";
+    if(hasLiveMatch())out<<"\n"<<liveMatchAdviceText()<<"\n";
     if(!permissionCoaching())out<<"В этой должности тактику определяет тренер. Для ручного управления выберите тренерскую роль или свободную сложность.\n";
     out<<"\n"<<opponentReport();
     return out.str();
