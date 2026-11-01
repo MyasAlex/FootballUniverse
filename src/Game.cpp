@@ -3110,7 +3110,7 @@ std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12"&&header!="FUSAVE_12_FLOW1")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
     const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
     const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_12_FLOW1");
