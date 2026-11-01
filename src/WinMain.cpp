@@ -354,8 +354,12 @@ void drawPitch(HDC dc,RECT area){
     if(frame.homeClub>=0){
         // The ball is connected to the actual carrier/pass/shot event at this minute.
         // Interpolation is visual only: it never changes the underlying match result.
-        const float fromX=px(float(frame.ballFromX));
-        const float fromY=py(float(frame.ballFromY));
+        // Start at the PREVIOUSLY RENDERED ball, not a newly guessed passer.
+        // The old renderer snapped the ball to frame.ballFromX each minute.
+        const bool sameFixture=previousPitch.homeClub==frame.homeClub&&
+                               previousPitch.awayClub==frame.awayClub;
+        const float fromX=px(float(sameFixture?previousPitch.ballX:frame.ballFromX));
+        const float fromY=py(float(sameFixture?previousPitch.ballY:frame.ballFromY));
         const float endX=px(float(frame.ballX));
         const float endY=py(float(frame.ballY));
         const float ballX=fromX+(endX-fromX)*eased;
