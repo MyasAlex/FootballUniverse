@@ -323,7 +323,10 @@ PitchFrame Game::pitchFrame()const{
     // They are deterministic and never consume the match RNG (save/resume is stable).
     const auto groupPosition=[&](const std::vector<int>& ids,int team){
         const int side=team==0?1:-1;
-        int used[4]={};
+        // Stable shirt slot: a sending-off or substitution must NOT shift all
+        // teammates to another lane. Keep the full "ever played" order.
+        const auto& original=hasLiveMatch()?
+            (team==0?live_.usedHome:live_.usedAway):ids;
         const std::array<std::array<int,7>,4> lanes={{
             {{350,350,350,350,350,350,350}},
             {{95,235,465,605,350,170,525}},
@@ -334,7 +337,13 @@ PitchFrame Game::pitchFrame()const{
             const Player* player=findPlayer(id);
             if(!player)continue;
             const int group=std::clamp(positionGroup(player->position),0,3);
-            const int index=used[group]++;
+            int index=0;
+            for(int previousId:original){
+                if(previousId==id)break;
+                const Player* previous=findPlayer(previousId);
+                if(previous&&std::clamp(positionGroup(previous->position),0,3)==group)
+                    ++index;
+            }
             const int baseX=group==0?72:group==1?255:group==2?490:745;
             const int baseY=lanes[group][index%7];
             // Smooth, bounded movement. Old modulo offsets jumped 60+ pixels
