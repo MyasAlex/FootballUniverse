@@ -104,11 +104,14 @@ void setText(HWND h,const std::string& text){
 }
 std::wstring money(int v){std::wostringstream o;o<<std::fixed<<std::setprecision(1)<<v/1000000.0<<L" млн €";return o.str();}
 HWND create(const wchar_t* kind, const wchar_t* label,DWORD style,int id=0,DWORD ex=0,HWND parent=nullptr){
-    HWND wnd=CreateWindowExW(ex,kind,label,style,0,0,100,30,parent?parent:mainWindow,HMENU(INT_PTR(id)),appInstance,nullptr);
+    HWND wnd=CreateWindowExW(ex,kind,label,style|WS_CLIPSIBLINGS,0,0,100,30,parent?parent:mainWindow,HMENU(INT_PTR(id)),appInstance,nullptr);
     SendMessageW(wnd,WM_SETFONT,WPARAM(uiFont),TRUE);return wnd;
 }
 void show(HWND wnd,bool visible){if(wnd)ShowWindow(wnd,visible?SW_SHOW:SW_HIDE);}
-void move(HWND wnd,int x,int y,int w,int h){if(wnd)MoveWindow(wnd,x,y,std::max(0,w),std::max(0,h),TRUE);}
+void move(HWND wnd,int x,int y,int w,int h){
+    if(wnd)SetWindowPos(wnd,nullptr,x,y,std::max(0,w),std::max(0,h),
+                        SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS);
+}
 void fillCombo(HWND combo,const std::vector<std::wstring>& items,int defaultItem){
     SendMessageW(combo,CB_RESETCONTENT,0,0);
     for(const auto& s:items)SendMessageW(combo,CB_ADDSTRING,0,LPARAM(s.c_str()));
@@ -161,13 +164,29 @@ std::string playerDetails(int id){
     o<<"Навыки, трансферная стоимость и зарплата — игровые оценки, не данные FIFA/FM.\n";
     return o.str();
 }
+bool roleHasPage(int screen){
+    if(!started)return true;
+    switch(game().role()){
+    case fu::Role::Coach:
+        return screen!=9; // Commercial negotiations belong to the president.
+    case fu::Role::Director:
+        return screen!=2&&screen!=3&&screen!=8&&screen!=9&&screen!=15;
+    case fu::Role::Owner:
+        return screen==0||screen==4||screen==5||screen==10||
+               screen==11||screen==12||screen==13||screen==14;
+    case fu::Role::President:
+        return screen==0||screen==4||screen==5||screen==9||
+               screen==10||screen==11||screen==12||screen==13||screen==14;
+    case fu::Role::Sandbox:return true;
+    }
+    return false;
+}
 void arrange(){
     if(!mainWindow)return;
     RECT r{};GetClientRect(mainWindow,&r);
     // Always use the REAL client rectangle. Inflating it caused text panels
     // and buttons to be drawn over one another in resized/fullscreen windows.
     const int w=std::max(1,int(r.right-r.left)),h=std::max(1,int(r.bottom-r.top));
-    if(w<580||h<440)return; // Avoid a partially laid-out intermediate WM_SIZE.
     const int sidebarWidth=std::clamp(w/5,160,205);
     const int left=sidebarWidth+12,right=w-20,bodyWidth=right-left;
     if(!started){
@@ -185,9 +204,13 @@ void arrange(){
         move(subtitleText,left,65,std::max(120,bodyWidth-115),22);
         move(clubLogoWindow,right-85,12,82,82);
         // Adaptive navigation: prevent the bottom items from overlapping the status bar.
-        const int navStep=std::clamp((h-167)/16,24,37);
-        for(int i=0;i<16;++i)
-            move(nav[i],10,74+i*navStep,sidebarWidth-18,std::max(22,navStep-2));
+        int navCount=0;
+        for(int i=0;i<16;++i)if(roleHasPage(i))++navCount;
+        const int navStep=std::clamp((h-167)/std::max(1,navCount),22,37);
+        int navIndex=0;
+        for(int i=0;i<16;++i)if(roleHasPage(i))
+            move(nav[i],10,74+(navIndex++)*navStep,sidebarWidth-18,
+                 std::max(20,navStep-2));
         bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15;
         bool pitchNeeded=(page==4&&showPitch);
         const int contentY=102;
@@ -592,6 +615,11 @@ void showPage(int next){
     if(!started)return;
     if(next!=4)autoPlayMatch=false;
     page=std::clamp(next,0,15);
+    if(!roleHasPage(page))page=0;
+    // Suspend all child painting until their positions, text and visibility
+    // are in sync. This prevents stale panels showing through during navigation.
+    SendMessageW(mainWindow,WM_SETREDRAW,FALSE,0);
+    arrange();
     lastListIndex=0;
     // Owner-draw nav does not automatically repaint when a different page is selected.
     for(auto& button:nav)if(button)InvalidateRect(button,nullptr,TRUE);
@@ -599,7 +627,7 @@ void showPage(int next){
     show(mainText,true);
     show(listControl,listNeeded);show(inputControl,page==1||page==6||page==7||page==8||page==9||page==11||page==3||(page==4&&game().hasLiveMatch()));
     show(pitchWindow,page==4&&showPitch);
-    for(int i=0;i<16;++i)show(nav[i],true);
+    for(int i=0;i<16;++i)show(nav[i],roleHasPage(i));
     auto labels=buttonTexts(page);
     for(int i=0;i<5;++i){
         SetWindowTextW(actions[i],labels[i].c_str());
@@ -655,8 +683,9 @@ void showPage(int next){
     }
     tell(game().status());
     arrange();
+    SendMessageW(mainWindow,WM_SETREDRAW,TRUE,0);
     RedrawWindow(mainWindow,nullptr,nullptr,
-        RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW);
+        RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW|RDW_FRAME);
     InvalidateRect(pitchWindow,nullptr,TRUE);
     InvalidateRect(clubLogoWindow,nullptr,TRUE);
 }
@@ -949,8 +978,8 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         SendMessageW(listControl,WM_SETFONT,WPARAM(smallFont),TRUE);
         inputControl=create(L"EDIT",L"",WS_CHILD|ES_AUTOHSCROLL|WS_TABSTOP,503,WS_EX_CLIENTEDGE);
         for(int i=0;i<6;++i)actions[i]=create(L"BUTTON",L"",WS_CHILD|BS_OWNERDRAW|WS_TABSTOP,ACTION_START+i);
-        pitchWindow=CreateWindowExW(0,L"FU_Pitch",L"",WS_CHILD,0,0,10,10,hwnd,nullptr,appInstance,nullptr);
-        clubLogoWindow=CreateWindowExW(0,L"FU_ClubLogo",L"",WS_CHILD|WS_VISIBLE,0,0,10,10,hwnd,nullptr,appInstance,nullptr);
+        pitchWindow=CreateWindowExW(0,L"FU_Pitch",L"",WS_CHILD|WS_CLIPSIBLINGS,0,0,10,10,hwnd,nullptr,appInstance,nullptr);
+        clubLogoWindow=CreateWindowExW(0,L"FU_ClubLogo",L"",WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS,0,0,10,10,hwnd,nullptr,appInstance,nullptr);
         setupName=create(L"EDIT",L"",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,610,WS_EX_CLIENTEDGE);
         setupClub=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,SETUP_CLUB);
         setupRole=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,SETUP_ROLE);
@@ -971,7 +1000,10 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         info->ptMinTrackSize.y=680;
         return 0;
     }
-    case WM_SIZE:arrange();return 0;
+    case WM_SIZE:
+        arrange();
+        RedrawWindow(hwnd,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN);
+        return 0;
     case WM_TIMER:{
         if(w!=PITCH_TIMER)return 0;
         if(started&&page==4){
@@ -1061,7 +1093,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int showCommand){
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"FootballUniverseDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     wc.hbrBackground=backgroundBrush;RegisterClassExW(&wc);
-    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.11 — анимированный футбольный менеджер",
+    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.12.2 — проверка исправлений",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,840,nullptr,nullptr,instance,nullptr);
     if(!window){MessageBoxW(nullptr,L"Не удалось создать окно",L"Ошибка",MB_ICONERROR);return 1;}
     trace("window CREATED");ShowWindow(window,showCommand);trace("window SHOWN");UpdateWindow(window);trace("window UPDATED");
