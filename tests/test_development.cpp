@@ -57,7 +57,7 @@ int main(){
     for(int i=0;i<10;++i){
         g.cycleTrainingFocus(youngId);
         const auto* p=g.findPlayer(youngId);
-        if(p->trainingFocus>=0 && p->skill[p->trainingFocus]<p->potential){
+        if(p->trainingFocus>=0 && p->skill[p->trainingFocus]+6<p->potential){
             focus=p->trainingFocus;break;
         }
     }
@@ -67,9 +67,9 @@ int main(){
     // in-game training days for this deterministic progression requirement.
     const int trainingStart=g.totalDays();
     for(int attempts=0;attempts<800&&g.totalDays()<trainingStart+230&&
-        g.findPlayer(youngId)->skill[focus]<=originalSkill;++attempts)
+        g.findPlayer(youngId)->developedSkills<1;++attempts)
         nextDay(g);
-    if(g.findPlayer(youngId)->skill[focus]<=originalSkill){
+    if(g.findPlayer(youngId)->developedSkills<1){
         const auto* p=g.findPlayer(youngId);
         std::cerr<<"DIAGNOSTIC: training time "<<g.totalDays()-trainingStart
                  <<" days, skill "<<p->skill[focus]<<" baseline "<<originalSkill
