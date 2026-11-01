@@ -1432,7 +1432,47 @@ std::string Game::homeText()const{
     o<<"КЛУБ: "<<myClub().name<<"\n";
     o<<"Менеджер: "<<manager_<<" | репутация "<<reputation_<<"/100\n";
     o<<"Дивизион: "<<leagues_[myClub().league].name<<" ("<<leagues_[myClub().league].country<<")\n";
-    o<<"Роль: "<<(role_==Role::Coach?"Главный тренер":role_==Role::Director?"Спортивный директор":role_==Role::Owner?"Владелец":role_==Role::President?"Президент":"Песочница")<<"\n";    o<<"\n"<<roleOverview()<<"\n";
+    o<<"Роль: "<<(role_==Role::Coach?"Главный тренер":role_==Role::Director?"Спортивный директор":role_==Role::Owner?"Владелец":role_==Role::President?"Президент":"Песочница")<<"\n";
+    o<<"\n"<<roleOverview()<<"\n";
+    // Each career now opens with a genuinely different operational dashboard.
+    o<<"ВАША РАБОЧАЯ ПАНЕЛЬ\n";
+    switch(role_){
+    case Role::Coach:{
+        int injured=0,unfit=0;
+        for(const auto& p:players_)if(p.club==teamId_){
+            if(p.injured)++injured;
+            if(p.fitness<60)++unfit;
+        }
+        o<<"Готовность: травмировано "<<injured<<", уставших "<<unfit<<"\n";
+        o<<"Схема "<<formations[myClub().formation]<<", стиль "<<tactics[myClub().tactic]<<"\n";
+        o<<"Ваши основные вкладки: Состав / Тактика / Тренировки / Матч.\n";
+        break;
+    }
+    case Role::Director:{
+        int deals=0,expiring=0;
+        for(const auto& d:deals_)if(int(d.stage)<=4)++deals;
+        for(const auto& p:players_)if(p.club==teamId_&&p.contractYear<=season_+1)++expiring;
+        o<<"Переговоров в работе: "<<deals<<", контрактов на исходе: "<<expiring<<"\n";
+        o<<"Трансферный бюджет: "<<money(myClub().budget)<<"\n";
+        o<<"Ваши вкладки: Трансферы / Контракты / Академия.\n";
+        break;
+    }
+    case Role::Owner:
+        o<<"Капитал клуба: "<<money(myClub().budget)<<"\n";
+        o<<"Объекты: стадион "<<myClub().stadium<<", база "<<myClub().facilities
+         <<"/10, академия "<<myClub().academy<<"/10\n";
+        o<<"Ваша вкладка: Финансы (капитальные инвестиции).\n";
+        break;
+    case Role::President:
+        o<<"Поддержка фанатов: "<<myClub().fans<<"/100, правления: "<<myClub().board<<"/100\n";
+        o<<"Доход спонсора за домашний матч: "<<money(myClub().sponsorship)<<"\n";
+        o<<"Ваша работа: спонсоры, билеты, болельщики и персонал.\n";
+        break;
+    case Role::Sandbox:
+        o<<"Все решения доступны: состав, тренировки, рынок, бюджет, коммерция.\n";
+        break;
+    }
+    o<<"\n";
     o<<"Сложность: "<<(difficulty_==Difficulty::Easy?"Лёгкая":difficulty_==Difficulty::Realistic?"Реализм":difficulty_==Difficulty::Hard?"Сложная":"Свободная песочница")<<"\n\n";
     o<<"Бюджет: "<<money(myClub().budget)<<"\n";
     int liveDeals=0;for(const auto& d:deals_)if(int(d.stage)<=4)++liveDeals;
@@ -1813,6 +1853,7 @@ void Game::playMinute(LiveMatch& live,bool detailed){
     if(std::find(teamXI.begin(),teamXI.end(),live.ballCarrierId)==teamXI.end())
         live.ballCarrierId=goalkeeper(teamXI);
     const int teamId=home?m.home:m.away;
+    const int attackingId=teamId;
     if(live.minute==1)
         live.events.push_back({live.minute,attacking.name+
             ": вратарь начинает первую атаку короткой передачей."});
@@ -3078,7 +3119,8 @@ std::string Game::load(const std::string& path){
     const bool version9=(header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
     const bool version10=(header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
     const bool version11=(header=="FUSAVE_11"||header=="FUSAVE_12"||header=="FUSAVE_13");
-    const bool version12=(header=="FUSAVE_12");
+    const bool version12=(header=="FUSAVE_12"||header=="FUSAVE_13");
+    const bool version13=(header=="FUSAVE_13");
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
