@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FootballUniverse VERSION 0.12.1 LANGUAGES CXX)
+project(FootballUniverse VERSION 0.14.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Link the MSVC runtime statically so players do not need Visual C++ installed.
@@ -96,3 +96,8 @@ set_tests_properties(five_career_roles_are_distinct PROPERTIES WORKING_DIRECTORY
 add_executable(fu_pitch_motion_tests tests/test_pitch_motion.cpp)
 target_link_libraries(fu_pitch_motion_tests PRIVATE fu_core)
 add_test(NAME no_abrupt_player_teleportation COMMAND fu_pitch_motion_tests)
+
+add_executable(fu_match_continuity_tests tests/test_match_continuity.cpp)
+target_link_libraries(fu_match_continuity_tests PRIVATE fu_core)
+add_test(NAME continuous_match_possession_and_replay COMMAND fu_match_continuity_tests)
+set_tests_properties(continuous_match_possession_and_replay PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
