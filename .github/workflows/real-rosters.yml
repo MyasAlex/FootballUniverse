@@ -10,14 +10,12 @@ permissions:
 jobs:
   wikidata-snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Probe Wikidata availability and club identities
-        run: python tools/build_real_rosters.py --probe
       - name: Build real-player snapshot from public-domain data
         run: python tools/build_real_rosters.py
       - name: Check dataset exists and has enough players
@@ -29,6 +27,14 @@ jobs:
           assert len(rows)>=100,len(rows)
           print(f"Real player snapshot has {len(rows)} players")
           PY
+      - name: Archive reproducible snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: RealFootballers-CSV
+          path: |
+            data/real_players.csv
+            data/real_players_meta.json
+          retention-days: 14
       - name: Commit updated roster snapshot
         shell: bash
         run: |
@@ -36,6 +42,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add data/real_players.csv data/real_players_meta.json
           if ! git diff --cached --quiet; then
-            git commit -m "Update offline CC0 footballer roster snapshot (Wikidata)"
-            git push
+            git commit -m "Update offline open footballer roster snapshot (Wikipedia/Wikidata)"
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
           fi
