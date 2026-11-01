@@ -41,9 +41,9 @@ fu::Game& game() {
 }
 HINSTANCE appInstance{};
 HWND mainWindow{}, mainText{}, listControl{}, inputControl{}, titleText{}, subtitleText{}, statusText{}, pitchWindow{}, clubLogoWindow{};
-constexpr int NAV_COUNT=19;
+constexpr int NAV_COUNT=21;
 constexpr int PREPARATION_PAGE=16;
-constexpr int WORLD_MARKET_PAGE=17, SAVES_PAGE=18;
+constexpr int WORLD_MARKET_PAGE=17, SAVES_PAGE=18, ANALYTICS_PAGE=19, BOARD_PAGE=20;
 HWND nav[NAV_COUNT]{}, actions[6]{};
 HWND setupName{}, setupClub{}, setupRole{}, setupDifficulty{}, setupLeagues{}, setupHelp{}, setupStart{}, setupLoad{};
 HWND searchName{},searchPosition{},searchAge{},searchPrice{},searchSort{},searchApply{},searchReset{},searchCount{};
@@ -81,7 +81,7 @@ std::vector<int> visibleIds;
 std::vector<int> activeNavigation;
 int lastListIndex=0;
 std::wstring detailText;
-const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Карьера тренера",L"Подготовка к матчу",L"Мировой рынок",L"Сохранения"};
+const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Карьера тренера",L"Подготовка к матчу",L"Мировой рынок",L"Сохранения",L"Аналитика",L"Совет директоров"};
 static_assert(sizeof(navLabels)/sizeof(navLabels[0])==NAV_COUNT);
 const int NAV_START=100, ACTION_START=300, LIST_ID=501, SETUP_START=600, SETUP_LOAD=601, SETUP_CLUB=602, SETUP_LEAGUES=603;
 constexpr int SEARCH_NAME=700,SEARCH_POSITION=701,SEARCH_AGE=702,SEARCH_PRICE=703,
@@ -216,6 +216,7 @@ std::string playerDetails(int id){
     return o.str();
 }
 bool roleHasPage(int screen){
+    if(screen==ANALYTICS_PAGE||screen==BOARD_PAGE)return true;
     if(!started||game().difficulty()==fu::Difficulty::Free||
        game().role()==fu::Role::Sandbox)return true;
     switch(game().role()){
@@ -237,7 +238,8 @@ bool actionAllowed(int screen,int action){
     const bool invest=game().canInvest(),commerce=game().canCommercial();
     switch(screen){
     case 1:return action==3?sport:coach;
-    case 2:case 3:case 8:case PREPARATION_PAGE:return action==5||coach;
+    case 2:case 8:case PREPARATION_PAGE:return action==5||coach;
+    case 3:return coach||action==2;
     case 4:return (action!=3&&action!=5)||coach;
     case 6:return action==3||sport;
     case 7:return action==1||sport;
@@ -250,6 +252,10 @@ bool actionAllowed(int screen,int action){
     case WORLD_MARKET_PAGE:
         return action!=3||coach;
     case 15:return action>=3||coach;
+    case ANALYTICS_PAGE:return action>=3||coach;
+    case BOARD_PAGE:return action!=1||game().role()==fu::Role::Coach||
+        game().role()==fu::Role::Director||game().role()==fu::Role::Sandbox||
+        game().difficulty()==fu::Difficulty::Free;
     default:return true;
     }
 }
@@ -350,6 +356,8 @@ std::vector<std::wstring> buttonTexts(int p){
         case PREPARATION_PAGE:return {L"Баланс",L"Контроль мяча",L"Прессинг",L"Контратаки",L"Удержать счёт"};
         case WORLD_MARKET_PAGE:return {L"Обновить",L"Трансферы",L"Календарь",L"Подготовка",L"Сохранить"};
         case SAVES_PAGE:return {L"Сохранить",L"Загрузить",L"Из копии",L"Обзор",L"Обновить"};
+        case ANALYTICS_PAGE:return {L"Линия защиты",L"Риск атаки",L"Стандарты",L"Подготовка",L"Матч"};
+        case BOARD_PAGE:return {L"Обновить",L"Запрос бюджета",L"Финансы",L"Академия",L"Почта"};
         default:return {L"Обзор",L"—",L"—",L"—",L"—"};
     }
 }
@@ -711,9 +719,9 @@ void showPage(int next){
         show(actions[i],labels[i]!=L"—");
         EnableWindow(actions[i],actionAllowed(page,i)?TRUE:FALSE);
     }
-    show(actions[5],page==1||page==2||page==6||page==8||page==10||page==11||page==PREPARATION_PAGE||(page==4&&game().hasLiveMatch()));
+    show(actions[5],page==1||page==2||page==3||page==6||page==8||page==10||page==11||page==PREPARATION_PAGE||(page==4&&game().hasLiveMatch()));
     EnableWindow(actions[5],actionAllowed(page,5)?TRUE:FALSE);
-    SetWindowTextW(actions[5],page==1?L"Вице-капитан":page==6?L"Отменить сделку":page==8?L"Жёсткий разговор":page==11?L"Уволить":page==2?L"Подготовка":page==PREPARATION_PAGE?L"Матч":page==4?L"Заменить":L"Билет −5 €");
+    SetWindowTextW(actions[5],page==1?L"Вице-капитан":page==6?L"Отменить сделку":page==8?L"Жёсткий разговор":page==11?L"Уволить":page==2?L"Подготовка":page==3?L"План недели":page==PREPARATION_PAGE?L"Матч":page==4?L"Заменить":L"Билет −5 €");
     if(page==6)SetWindowTextW(actions[3],shortlistOnly?L"Все игроки":L"Короткий список");
     if(page==4){
         SetWindowTextW(actions[0],game().hasLiveMatch()?L"+15 минут":L"Начать матч");
@@ -764,6 +772,8 @@ void showPage(int next){
         case 15:detailForSelected();break;
         case PREPARATION_PAGE:textContent(game().preparationText());break;
         case WORLD_MARKET_PAGE:textContent(game().worldMarketText());break;
+        case ANALYTICS_PAGE:textContent(game().analyticsText());break;
+        case BOARD_PAGE:textContent(game().boardReportText());break;
     }
     tell(game().status());arrange();
     SendMessageW(mainWindow,WM_SETREDRAW,TRUE,0);
@@ -852,6 +862,7 @@ void trigger(int action){
             try{response=game().assignMentor(id,std::stoi(text));}
             catch(...){response="Выберите молодого футболиста и введите ID наставника от 25 лет.";}
         }
+        if(action==5)response=game().planTrainingWeek();
     }else if(page==4){
         if(action==0){
             autoPlayMatch=false;
@@ -1007,6 +1018,17 @@ void trigger(int action){
         if(action==2){historyView=0;go(13);return;}
         if(action==3){go(PREPARATION_PAGE);return;}
         if(action==4)response=fu::saveCareerSafely(game(),saveFile);
+    }else if(page==ANALYTICS_PAGE){
+        if(action==0)response=game().changeDefensiveLine();
+        if(action==1)response=game().changeAttackingRisk();
+        if(action==2)response=game().changeSetPieces();
+        if(action==3){go(PREPARATION_PAGE);return;}
+        if(action==4){go(4);return;}
+    }else if(page==BOARD_PAGE){
+        if(action==1)response=game().requestBoardInvestment();
+        if(action==2){go(10);return;}
+        if(action==3){go(11);return;}
+        if(action==4){go(12);return;}
     }else if(page==SAVES_PAGE){
         if(action==0)response=fu::saveCareerSafely(game(),careerSlotPath(id));
         if(action==1)response=game().load(careerSlotPath(id).string());
@@ -1188,7 +1210,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int showCommand){
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"FootballUniverseDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     wc.hbrBackground=backgroundBrush;RegisterClassExW(&wc);
-    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.14.2 — живая футбольная вселенная",
+    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.15.0 — расширенная футбольная вселенная",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,840,nullptr,nullptr,instance,nullptr);
     if(!window){MessageBoxW(nullptr,L"Не удалось создать окно",L"Ошибка",MB_ICONERROR);return 1;}
     trace("window CREATED");ShowWindow(window,showCommand);trace("window SHOWN");UpdateWindow(window);trace("window UPDATED");

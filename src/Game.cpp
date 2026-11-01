@@ -60,7 +60,7 @@ int playerRating(const Player& p){
 Game::Game():rng_(20261030U){ newCareer("Менеджер", 0, Role::Coach, Difficulty::Realistic,{0,1}); }
 int Game::random(int lo,int hi){return std::uniform_int_distribution<int>(lo,hi)(rng_);}
 void Game::seedWorld(){
-    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();cups_.clear();trophies_.clear();leagueHistory_.clear();movements_.clear();coaches_.clear();job_={};reputation_=55;archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();transferHistory_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;live_={};
+    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();cups_.clear();trophies_.clear();leagueHistory_.clear();movements_.clear();coaches_.clear();job_={};reputation_=55;archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();transferHistory_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;lastBoardRequestSeason_=-1;live_={};
     const std::vector<std::tuple<std::string,std::string,std::vector<std::string>>> definitions={
       {"Англия","Премьер-лига",{"Арсенал","Ливерпуль","Манчестер Сити","Челси","Манчестер Юнайтед","Тоттенхэм"}},
       {"Испания","Ла Лига",{"Реал Мадрид","Барселона","Атлетико","Атлетик Бильбао","Вильярреал","Реал Сосьедад"}},
@@ -1464,8 +1464,209 @@ std::string Game::tacticsText()const{
     o<<"Тактика влияет на вероятность атаки, голевые моменты,\nусталость и риск пропустить гол.\n";
     o<<"Тренировки влияют на форму, мораль и развитие навыков.\n";
     o<<"Выберите индивидуальный фокус во вкладке «Тренировки».\n";
+    o<<"Линия обороны: "<<std::array<const char*,3>{"Низкая","Средняя","Высокая"}[c.defensiveLine]<<"\n";
+    o<<"Риск атаки: "<<std::array<const char*,3>{"Осторожный","Баланс","Смелый"}[c.attackingRisk]<<"\n";
+    o<<"Стандарты: "<<std::array<const char*,3>{"Надёжность","Баланс","Агрессивные подачи"}[c.setPieces]<<"\n";
+    o<<"Тонкие настройки — во вкладке «Аналитика».\n";
     return o.str();
 }
+std::string Game::changeDefensiveLine(){
+    if(!permissionCoaching())return status_="Нет полномочий управлять линией обороны.";
+    myClub().defensiveLine=(myClub().defensiveLine+1)%3;
+    return status_="Линия обороны изменена: "+
+        std::array<std::string,3>{"низкая","средняя","высокая"}[myClub().defensiveLine];
+}
+std::string Game::changeAttackingRisk(){
+    if(!permissionCoaching())return status_="Нет полномочий управлять риском атаки.";
+    myClub().attackingRisk=(myClub().attackingRisk+1)%3;
+    return status_="Риск атаки: "+
+        std::array<std::string,3>{"осторожно","сбалансированно","смело"}[myClub().attackingRisk];
+}
+std::string Game::changeSetPieces(){
+    if(!permissionCoaching())return status_="Нет полномочий изменять стандарты.";
+    myClub().setPieces=(myClub().setPieces+1)%3;
+    return status_="Работа над стандартами: "+
+        std::array<std::string,3>{"надёжность","баланс","акцент на подачах"}[myClub().setPieces];
+}
+
+std::string Game::planTrainingWeek(){
+    if(!permissionCoaching())return status_="Нет полномочий планировать тренировки.";
+    int count=0,fitness=0,injuries=0,veryTired=0;
+    for(const auto& p:players_)if(p.club==teamId_){
+        ++count;fitness+=p.fitness;
+        if(p.injured)++injuries;
+        if(p.fitness<67)++veryTired;
+    }
+    const Match* next=upcomingMatch();
+    const int until=next?std::max(0,next->day-day_):30;
+    int newPlan=1;
+    if(veryTired>=4||injuries>=4||until<=2&&(count&&fitness/count<85))newPlan=0;
+    else if(until<=4)newPlan=4;
+    else if(count&&fitness/count>=87)newPlan=3;
+    else newPlan=1;
+    const int oldPlan=myClub().training;
+    myClub().training=newPlan;
+    status_="Недельный тренировочный блок: "+trainings[newPlan]+
+        ". Усталых: "+std::to_string(veryTired)+
+        ", травм: "+std::to_string(injuries)+
+        ", до матча: "+std::to_string(until)+" дней.";
+    if(oldPlan!=newPlan)addMessage("План тренировочной недели",status_);
+    return status_;
+}
+
+std::string Game::analyticsText()const{
+    std::ostringstream o;
+    o<<"АНАЛИТИЧЕСКИЙ ЦЕНТР / СЕЗОН "<<season_<<"\n\n";
+    const Club& club=myClub();
+    o<<"Тактика: линия "<<club.defensiveLine<<"/2, риск "
+     <<club.attackingRisk<<"/2, стандарты "<<club.setPieces<<"/2\n";
+    o<<"Высокая линия помогает прессинговать, но открывает свободные зоны.\n"
+     <<"Высокий риск создаёт больше ударов ценой точности пасов и сил.\n"
+     <<"Акцент на стандартах повышает качество атак после угловых.\n\n";
+    int played=0,scored=0,conceded=0,shotsFor=0,shotsAgainst=0,xgFor=0,xgAgainst=0;
+    int totalPasses=0,successPasses=0;
+    std::vector<const Match*> recent;
+    auto collect=[&](const std::vector<Match>& list){
+        for(const auto& m:list)if(m.played&&(m.home==teamId_||m.away==teamId_))
+            recent.push_back(&m);
+    };
+    collect(archive_);collect(matches_);
+    std::sort(recent.begin(),recent.end(),[](const Match* a,const Match* b){
+        return std::tie(a->season,a->day,a->id)>std::tie(b->season,b->day,b->id);
+    });
+    for(const Match* m:recent){
+        if(played==8)break;
+        const bool home=m->home==teamId_;
+        ++played;
+        scored+=home?m->homeGoals:m->awayGoals;
+        conceded+=home?m->awayGoals:m->homeGoals;
+        shotsFor+=home?m->shotsH:m->shotsA;
+        shotsAgainst+=home?m->shotsA:m->shotsH;
+        xgFor+=home?m->xgH:m->xgA;
+        xgAgainst+=home?m->xgA:m->xgH;
+        totalPasses+=home?m->passesH:m->passesA;
+        successPasses+=home?m->completedH:m->completedA;
+    }
+    o<<"ПОСЛЕДНИЕ "<<played<<" МАТЧЕЙ\n";
+    if(played){
+        o<<"Голы: "<<scored<<" / "<<conceded<<" | удары: "<<shotsFor<<" / "<<shotsAgainst<<"\n"
+         <<"xG: "<<std::fixed<<std::setprecision(2)<<xgFor/100.0<<" / "<<xgAgainst/100.0
+         <<" | точность паса: "<<(totalPasses?successPasses*100/totalPasses:0)<<"%\n";
+        o<<"Реализация: "<<(shotsFor?scored*100/shotsFor:0)
+         <<"% ударов | оборона пропускает "<<std::setprecision(2)
+         <<double(conceded)/played<<" за матч\n";
+    }else o<<"Сезон ещё не начался: после первых матчей появится аналитика.\n";
+    int tired=0,injured=0,total=0,fitness=0;
+    std::vector<const Player*> atRisk;
+    for(const auto& p:players_)if(p.club==teamId_){
+        ++total;fitness+=p.fitness;
+        if(p.fitness<65&&!p.injured){++tired;atRisk.push_back(&p);}
+        if(p.injured)++injured;
+    }
+    std::sort(atRisk.begin(),atRisk.end(),[](const Player* a,const Player* b){
+        return std::tie(a->fitness,a->id)<std::tie(b->fitness,b->id);
+    });
+    // Aggregate actual player match ratings and minutes, not random skill scores.
+    struct Performance { int id=0,minutes=0,ratingWeighted=0,goals=0,assists=0; };
+    std::vector<Performance> perf;
+    for(size_t index=0;index<std::min<size_t>(recent.size(),8);++index){
+        for(const auto& stat:recent[index]->playerStats){
+            const Player* p=findPlayer(stat.playerId);
+            if(!p||p->club!=teamId_||stat.minutes<=0)continue;
+            auto it=std::find_if(perf.begin(),perf.end(),[&](const Performance& item){
+                return item.id==stat.playerId;
+            });
+            if(it==perf.end()){perf.push_back({stat.playerId});it=perf.end()-1;}
+            it->minutes+=stat.minutes;
+            it->ratingWeighted+=stat.rating10*stat.minutes;
+            it->goals+=stat.goals;
+            it->assists+=stat.assists;
+        }
+    }
+    std::sort(perf.begin(),perf.end(),[](const Performance& a,const Performance& b){
+        const int ar=a.minutes?a.ratingWeighted*100/a.minutes:0;
+        const int br=b.minutes?b.ratingWeighted*100/b.minutes:0;
+        return std::tie(ar,a.minutes,a.id)>std::tie(br,b.minutes,b.id);
+    });
+    if(!perf.empty()){
+        o<<"\nЛИДЕРЫ ПО ОЦЕНКАМ (ПОСЛЕДНИЕ 8 МАТЧЕЙ)\n";
+        for(size_t i=0;i<std::min<size_t>(perf.size(),6);++i){
+            const auto& item=perf[i];const Player* p=findPlayer(item.id);
+            if(p)o<<" • "<<p->name<<" | оценка "<<std::fixed<<std::setprecision(1)
+                   <<(item.minutes?item.ratingWeighted/double(item.minutes*10):0)
+                   <<" | минуты "<<item.minutes<<" | голы/ассисты "
+                   <<item.goals<<"/"<<item.assists<<"\n";
+        }
+    }
+    o<<"\nМЕДИЦИНА И НАГРУЗКА\nСвежесть состава: "<<(total?fitness/total:0)
+     <<"/100 | устали: "<<tired<<" | травмы: "<<injured<<"\n";
+    for(size_t i=0;i<std::min<size_t>(atRisk.size(),5);++i)
+        o<<" • "<<atRisk[i]->name<<" — "<<atRisk[i]->fitness<<"/100\n";
+    if(tired>=4)o<<"Совет: поставить восстановительные тренировки и освежить состав.\n";
+    if(const Match* next=upcomingMatch()){
+        const int rival=next->home==teamId_?next->away:next->home;
+        const Club& c=clubs_.at(rival);
+        o<<"\nДОСЬЕ НА СОПЕРНИКА\n"<<c.name<<" | "<<clubForm(rival)
+         <<"\nСхема: "<<formations[c.formation]<<", стиль: "<<tactics[c.tactic]
+         <<"\nПрессинг: "<<c.pressing<<"/2; темп: "<<c.tempo<<"/2; ширина: "<<c.width<<"/2\n";
+        int rivalFitness=0,n=0;
+        for(int id:starters(rival))if(const Player* p=findPlayer(id)){
+            rivalFitness+=p->fitness;++n;
+        }
+        o<<"Свежесть основы соперника: "<<(n?rivalFitness/n:0)<<"/100\n";
+        if(c.pressing==2)o<<"Уязвимость: свободные зоны за высоким прессингом. Рассмотрите контратаки.\n";
+        else if(c.tactic==0||c.formation==4)o<<"Уязвимость: низкий блок. Рассмотрите контроль мяча и игру шире.\n";
+        else o<<"Совет: выиграть борьбу за центр и следить за усталостью обороны.\n";
+    }
+    return o.str();
+}
+
+std::string Game::boardReportText()const{
+    const auto& c=myClub();
+    std::ostringstream o;
+    o<<"СОВЕТ ДИРЕКТОРОВ / "<<c.name<<"\n\n";
+    const int total=c.wins+c.draws+c.losses;
+    const int target=std::clamp(35+c.prestige/2,55,85);
+    const int performance=total?c.points*100/(3*total):target;
+    o<<"Сезонная цель: "<<target<<"% доступных очков\n"
+     <<"Факт: "<<(total?std::to_string(performance)+"%":"оценка после первой игры")
+     <<" | матчей: "<<total<<"\n";
+    o<<"Доверие совета: "<<c.board<<"/100 | болельщиков: "<<c.fans
+     <<"/100\nБюджет: "<<money(c.budget)<<"\n";
+    int wages=0;
+    for(const auto& p:players_)if(p.club==teamId_)wages+=p.wage*4;
+    for(const auto& s:staff_)if(s.club==teamId_)wages+=s.weeklyWage*4;
+    o<<"Оценка фонда зарплат за 4 недели: "<<money(wages)<<"\n";
+    if(c.budget<wages*2)o<<"РИСК: бюджет покрывает менее двух зарплатных периодов.\n";
+    if(total>=4&&performance+15<target)o<<"Руководство недовольно спортивными результатами.\n";
+    else o<<"Совет ждёт стабильных результатов и финансовой дисциплины.\n";
+    if(lastBoardRequestSeason_==season_)o<<"\nБюджетное обращение в этом сезоне уже рассмотрено.\n";
+    else o<<"\nТренер и спортдиректор могут один раз в сезон запросить\n"
+           "дополнительный трансферный бюджет (решение зависит от доверия).\n";
+    return o.str();
+}
+
+std::string Game::requestBoardInvestment(){
+    if(role_!=Role::Coach&&role_!=Role::Director&&role_!=Role::Sandbox&&
+       difficulty_!=Difficulty::Free)
+        return status_="Финансовые заявки подаёт тренер или спортивный директор.";
+    if(lastBoardRequestSeason_==season_)
+        return status_="Заявка в текущем сезоне уже рассмотрена.";
+    lastBoardRequestSeason_=season_;
+    auto& c=myClub();
+    const int trust=std::clamp(c.board+(c.fans-50)/4,0,100);
+    const int approved=trust>=72?2000000:trust>=55?800000:0;
+    if(approved){
+        c.budget+=approved;c.board=clamp(c.board-2);
+        status_="Совет одобрил дополнительный бюджет: "+money(approved);
+    }else{
+        c.board=clamp(c.board-3);
+        status_="Совет отклонил заявку: недостаточное доверие и высокий риск.";
+    }
+    addMessage("Решение совета директоров",status_);
+    return status_;
+}
+
 std::string Game::financesText()const{
     const auto& c=myClub();
     std::ostringstream o;o<<"ФИНАНСЫ И ИНФРАСТРУКТУРА\n\n";
@@ -1512,7 +1713,7 @@ std::string Game::newsText()const{
     return o.str();
 }
 std::string Game::helpText()const{
-    return "FOOTBALL UNIVERSE 0.14.2 / ПРОТОТИП\n\n"
+    return "FOOTBALL UNIVERSE 0.15.0 / ПРОТОТИП\n\n"
     "Это самостоятельная C++-игра с текстовым и 2D-отображением матча.\n"
     "Календарь и кубки: вкладка «Архив» показывает матчи, сетку кубков и историю чемпионов.\n"
     "В шести странах: национальные кубки из 6 клубов, один международный кубок из 8.\n"
@@ -1678,6 +1879,23 @@ void Game::dailyTick(){
         }
     }
     if(totalDays_>0&&totalDays_%30==0){
+       // Regular board review has gameplay consequences, separate from the
+       // one-off transfer budget request. Played league games are counted only.
+       const int games=c.wins+c.draws+c.losses;
+       if(games>=5){
+           const int target=std::clamp(35+c.prestige/2,55,85);
+           const int current=c.points*100/(3*games);
+           if(current+18<target){
+               c.board=clamp(c.board-3);
+               addMessage("Ежемесячное заседание совета",
+                   "Спортивная цель не выполняется: "+std::to_string(current)+
+                   "% очков при плане "+std::to_string(target)+"%. Доверие снижено.");
+           }else if(current>target+8){
+               c.board=clamp(c.board+2);
+               addMessage("Ежемесячное заседание совета",
+                   "Команда опережает сезонный план. Руководство укрепляет доверие.");
+           }
+       }
        int wages=0;
        for(const auto& p:players_){
            if(p.club==teamId_)wages+=p.wage*4*(p.parentClub>=0?p.loanWageShare:100)/100;
@@ -1772,7 +1990,63 @@ void Game::newSeason(){
     addMessage("Новый сезон", "Сезон "+std::to_string(old)+"/"+std::to_string((old+1)%100)+" завершён. Начинается "+std::to_string(season_)+"/"+std::to_string((season_+1)%100)+". Регены добавлены, игроки постарели.");
     status_="Новый сезон "+std::to_string(season_);
 }
+// A rival coach uses the bench according to injuries, fatigue, match state
+// and position coverage. Used players cannot return to the bench or re-enter.
+void Game::manageOpponentSubstitutions(LiveMatch& live){
+    if(live.minute<56||live.minute>86||live.minute%7!=0)return;
+    const Match& match=matches_.at(live.id);
+    for(int team=0;team<2;++team){
+        const int cid=team==0?match.home:match.away;
+        if(cid==teamId_&&permissionCoaching())continue;
+        auto& xi=team==0?live.homeXI:live.awayXI;
+        auto& used=team==0?live.usedHome:live.usedAway;
+        int& subs=team==0?live.subsH:live.subsA;
+        if(subs>=5||xi.empty())continue;
+        const int difference=team==0?live.goalsH-live.goalsA:live.goalsA-live.goalsH;
+        int replace=-1,weakness=-1;
+        for(int id:xi){
+            const Player* p=findPlayer(id);
+            if(!p)continue;
+            // Do not swap a healthy goalkeeper for a field player.
+            const int vulnerability=(p->injured>0?250:0)+
+                std::max(0,83-p->fitness)*3+
+                (difference<0&&positionGroup(p->position)<3&&p->position!="GK"?9:0);
+            if(vulnerability>weakness){weakness=vulnerability;replace=id;}
+        }
+        if(replace<0||weakness<32)continue;
+        const Player* outgoing=findPlayer(replace);
+        if(!outgoing)continue;
+        int candidate=-1,best=-100000;
+        const int position=positionGroup(outgoing->position);
+        for(const auto& p:players_){
+            if(p.club!=cid||p.injured||p.suspension||p.fitness<50||
+               std::find(used.begin(),used.end(),p.id)!=used.end()||
+               std::find(xi.begin(),xi.end(),p.id)!=xi.end())continue;
+            const int group=positionGroup(p.position);
+            if((position==0)!=(group==0))continue;
+            const int positional=(group==position?65:group==2?10:0);
+            const int score=positional+playerRating(p)+p.fitness/3+
+                (difference<0&&group==3?12:0);
+            if(score>best){best=score;candidate=p.id;}
+        }
+        if(candidate<0||best<85)continue;
+        const Player* incoming=findPlayer(candidate);
+        auto pos=std::find(xi.begin(),xi.end(),replace);
+        if(pos==xi.end())continue;
+        *pos=candidate;used.push_back(candidate);++subs;
+        live.playerStats.push_back({candidate});
+        if(live.ballCarrierId==replace){
+            live.ballCarrierId=candidate;
+            live.previousCarrierId=-1;
+        }
+        live.events.push_back({live.minute,clubs_[cid].name+
+            ": автоматическая замена по решению тренера — "+
+            outgoing->name+" уходит, "+incoming->name+" выходит."});
+    }
+}
+
 void Game::playMinute(LiveMatch& live,bool detailed){
+    manageOpponentSubstitutions(live);
     const Match& m=matches_.at(live.id);
     const Club& h=clubs_[m.home],&a=clubs_[m.away];
     for(int id:live.homeXI)if(auto* st=statFor(live,id))++st->minutes;
@@ -1807,7 +2081,9 @@ void Game::playMinute(LiveMatch& live,bool detailed){
         if(!managedAway)describe(a,awayInstructions,live.goalsA-live.goalsH);
     }
     const int initiative=std::clamp(52+(strengthH-strengthA)*2+
-        homePlan.possession-awayPlan.possession,17,83);
+        homePlan.possession-awayPlan.possession+
+        (homeInstructions.attackingRisk-awayInstructions.attackingRisk)*3+
+        (homeInstructions.defensiveLine-awayInstructions.defensiveLine)*2,17,83);
     // A possession survives minute boundaries. Only a turnover, a shot or
     // a restart transfers the ball to the other team.
     if(live.ballCarrierId<0){
@@ -1862,7 +2138,8 @@ void Game::playMinute(LiveMatch& live,bool detailed){
         const int receiverId=candidates[random(0,int(candidates.size()-1))];
         const Player* receiver=findPlayer(receiverId);
         if(!receiver)break;
-        const int accuracy=std::clamp(62+passer->skill[2]/3+plan.accuracy,40,96);
+        const int accuracy=std::clamp(62+passer->skill[2]/3+plan.accuracy-
+            (attacking.attackingRisk-1)*4,40,96);
         const bool completed=random(1,100)<=accuracy;
         if(auto* st=statFor(live,passer->id)){
             ++st->passes;if(completed)++st->completedPasses;
@@ -1871,6 +2148,7 @@ void Game::playMinute(LiveMatch& live,bool detailed){
         if(completed)++(home?live.completedH:live.completedA);
         live.previousCarrierId=passer->id;
         live.lastAction=1;
+        live.momentumH=std::clamp(live.momentumH+(completed?(home?1:-1):(home?-3:3)),-100,100);
         if(completed){
             live.ballCarrierId=receiverId;
             live.attackPhase=std::max(live.attackPhase,positionGroup(receiver->position));
@@ -1894,6 +2172,8 @@ void Game::playMinute(LiveMatch& live,bool detailed){
         }
     }
     const int shotThreshold=std::clamp(20+plan.shots+
+        (attacking.attackingRisk-1)*5+
+        (defending.defensiveLine-1)*3+
         (strengthH-strengthA)*(home?1:-1)/5,8,40);
     // A shot cannot occur until the ball has physically reached a forward.
     if(!lost&&live.attackPhase>=3&&random(1,100)<=shotThreshold){
@@ -1902,11 +2182,20 @@ void Game::playMinute(LiveMatch& live,bool detailed){
             const Player* provider=findPlayer(live.previousCarrierId);
             if(provider&&(provider->club!=attackingId||provider->id==scorer->id))
                 provider=nullptr;
+            const bool deadBall=live.attackPhase>=3&&random(1,100)<=
+                5+attacking.setPieces*4;
+            if(deadBall){
+                ++(home?live.cornersH:live.cornersA);
+                if(detailed)live.events.push_back({live.minute,attacking.name+
+                    ": заработан угловой. Команда разыгрывает стандарт у ворот."});
+            }
             const int quality=std::clamp(13+(scorer->skill[1]-55)/3+
                 (scorer->skill[4]-55)/8+
                 (provider?(provider->skill[2]-50)/15:0)+
                 (strengthH-strengthA)*(home?1:-1)/6+
-                plan.quality,5,46);
+                plan.quality+(attacking.attackingRisk-1)*2+
+                (defending.defensiveLine-1)*2+
+                (deadBall?2+attacking.setPieces*2:0),5,46);
             const bool goal=random(1,100)<=quality;
             const bool onTarget=goal||random(1,100)<=std::clamp(40+scorer->skill[1]/3,40,83);
             if(home){
@@ -1938,10 +2227,13 @@ void Game::playMinute(LiveMatch& live,bool detailed){
                 const std::string result=goal?"ГОЛ!":onTarget?
                     "Удар в створ — вратарь спас!":"Удар мимо!";
                 live.events.push_back({live.minute,attacking.name+": "+from+
+                    (deadBall?std::string("После подачи с углового "):std::string())+
                     scorer->name+" пробил. "+result+
                     (goal?" Счёт "+std::to_string(live.goalsH)+":"+
                            std::to_string(live.goalsA)+".":"")});
             }
+            live.momentumH=std::clamp(live.momentumH+
+                (home?1:-1)*(goal?16:onTarget?7:3),-100,100);
             live.previousCarrierId=scorer->id;
             live.lastAction=goal?3:2;
             live.possessionHome=!home;
@@ -1993,7 +2285,8 @@ void Game::playMinute(LiveMatch& live,bool detailed){
             const auto* stat=statFor(live,id);
             if(!stat||stat->minutes<=0||stat->minutes%15!=0)continue;
             for(auto& p:players_)if(p.id==id){
-                p.fitness=clamp(p.fitness-matchFatigueCost(club,p.skill[7]));
+                p.fitness=clamp(p.fitness-matchFatigueCost(club,p.skill[7])-
+                    (club.attackingRisk==2?1:0)-(club.defensiveLine==2?1:0));
                 break;
             }
         }
@@ -2249,7 +2542,9 @@ std::string Game::matchText()const{
         o<<"Фолы: "<<l.foulsH<<" — "<<l.foulsA
          <<" | угловые: "<<l.cornersH<<" — "<<l.cornersA<<"\n";
         o<<"Тактика: "<<tactics[myClub().tactic]<<"\n";
-        o<<"Замены: "<<(m.home==teamId_?l.subsH:l.subsA)<<"/5\n\n";
+        o<<"Замены: "<<(m.home==teamId_?l.subsH:l.subsA)<<"/5"
+         <<" | импульс: "<<(m.home==teamId_?l.momentumH:-l.momentumH)
+         <<" (-100...100)\n\n";
         o<<liveMatchAdviceText()<<"\n";
         o<<"\nНА ПОЛЕ (ID): ";
         for(int id:(m.home==teamId_?l.homeXI:l.awayXI))o<<id<<" ";
@@ -3045,7 +3340,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_14\n";
+    f<<"FUSAVE_15\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -3054,7 +3349,7 @@ std::string Game::save(const std::string& path)const{
     f<<clubs_.size()<<'\n';
     for(const auto& c:clubs_){
         f<<c.id<<' '<<c.league<<' '<<c.budget<<' '<<c.fans<<' '<<c.board<<' '<<c.prestige<<' '<<c.stadium<<' '<<c.academy<<' '<<c.facilities<<' '
-         <<c.ticket<<' '<<c.sponsorship<<' '<<c.wins<<' '<<c.draws<<' '<<c.losses<<' '<<c.gf<<' '<<c.ga<<' '<<c.points<<' '<<c.formation<<' '<<c.tactic<<' '<<c.training<<' '<<c.captainId<<' '<<c.viceCaptainId<<' '<<c.pressing<<' '<<c.tempo<<' '<<c.width<<'\n';
+         <<c.ticket<<' '<<c.sponsorship<<' '<<c.wins<<' '<<c.draws<<' '<<c.losses<<' '<<c.gf<<' '<<c.ga<<' '<<c.points<<' '<<c.formation<<' '<<c.tactic<<' '<<c.training<<' '<<c.captainId<<' '<<c.viceCaptainId<<' '<<c.pressing<<' '<<c.tempo<<' '<<c.width<<' '<<c.defensiveLine<<' '<<c.attackingRisk<<' '<<c.setPieces<<'\n';
         putString(f,c.name);putString(f,c.city);
     }
     f<<players_.size()<<'\n';
@@ -3110,7 +3405,7 @@ std::string Game::save(const std::string& path)const{
      <<live_.passesH<<' '<<live_.passesA<<' '<<live_.completedH<<' '<<live_.completedA<<' '
      <<live_.foulsH<<' '<<live_.foulsA<<' '<<live_.cornersH<<' '<<live_.cornersA<<'\n';
     f<<live_.possessionHome<<' '<<live_.ballCarrierId<<' '<<live_.previousCarrierId
-     <<' '<<live_.attackPhase<<' '<<live_.lastAction<<'\n';
+     <<' '<<live_.attackPhase<<' '<<live_.lastAction<<' '<<live_.momentumH<<'\n';
     writeStats(live_.playerStats);
     f<<lastTeamTalkDay_<<' '<<scouts_.size()<<'\n';
     for(const auto& r:scouts_)f<<r.playerId<<' '<<r.days<<' '<<r.ability<<' '<<r.potential<<' '<<r.shortlisted<<'\n';
@@ -3172,15 +3467,17 @@ std::string Game::save(const std::string& path)const{
          <<transfer.fee<<' '<<transfer.kind<<'\n';
         putString(f,transfer.playerName);
     }
+    f<<lastBoardRequestSeason_<<'\n';
     return f.good()?"Карьера сохранена: "+path:"Ошибка записи сохранения";
 }
 std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12"&&header!="FUSAVE_13"&&header!="FUSAVE_14")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12"&&header!="FUSAVE_13"&&header!="FUSAVE_14"&&header!="FUSAVE_15")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version14=(header=="FUSAVE_14");
+    const bool version15=(header=="FUSAVE_15");
+    const bool version14=(header=="FUSAVE_14"||version15);
     const bool version13=(header=="FUSAVE_13"||version14);
     const bool version12=(header=="FUSAVE_12"||version13);
     const bool version11=(header=="FUSAVE_11"||version12);
@@ -3221,6 +3518,11 @@ std::string Game::load(const std::string& path){
             if(version11&&(!(f>>c.pressing>>c.tempo>>c.width)||
                 c.pressing<0||c.pressing>2||c.tempo<0||c.tempo>2||c.width<0||c.width>2))
                 throw std::runtime_error("Инструкции тренера");
+            if(version15&&(!(f>>c.defensiveLine>>c.attackingRisk>>c.setPieces)||
+                c.defensiveLine<0||c.defensiveLine>2||
+                c.attackingRisk<0||c.attackingRisk>2||
+                c.setPieces<0||c.setPieces>2))
+                throw std::runtime_error("Расширенные инструкции клуба");
             if(!getString(f,c.name)||!getString(f,c.city))throw std::runtime_error("Названия клубов");
             loaded.clubs_.push_back(c);
         }
@@ -3370,7 +3672,9 @@ std::string Game::load(const std::string& path){
                     if(!(f>>live.possessionHome>>live.ballCarrierId>>
                          live.previousCarrierId>>live.attackPhase>>live.lastAction)||
                        live.attackPhase<0||live.attackPhase>3||
-                       live.lastAction<0||live.lastAction>3)
+                       live.lastAction<0||live.lastAction>3||
+                       (version15&&(!(f>>live.momentumH)||
+                         live.momentumH< -100||live.momentumH>100)))
                         throw std::runtime_error("Состояние владения мячом");
                     const auto onField=[&](int id){
                         return id==-1||
@@ -3610,6 +3914,10 @@ std::string Game::load(const std::string& path){
                 loaded.transferHistory_.push_back(std::move(transfer));
             }
         }
+        if(version15&&(!(f>>loaded.lastBoardRequestSeason_)||
+            loaded.lastBoardRequestSeason_< -1||
+            loaded.lastBoardRequestSeason_>loaded.season_))
+            throw std::runtime_error("Запрос бюджета совета");
         if(loaded.teamId_<0||loaded.teamId_>=int(loaded.clubs_.size()))throw std::runtime_error("Ваш клуб");
         for(const auto& c:loaded.clubs_)if(c.id<0||c.id>=int(loaded.clubs_.size())||c.league<0||c.league>=int(loaded.leagues_.size()))throw std::runtime_error("Ссылки клубов");
         for(const auto& p:loaded.players_)if(p.club<0||p.club>=int(loaded.clubs_.size()))throw std::runtime_error("Ссылки игроков");

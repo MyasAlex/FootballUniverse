@@ -69,7 +69,7 @@ try{
     $hwnd=$proc.MainWindowHandle;if($hwnd -ne [IntPtr]::Zero){break}
   }
   if($hwnd -eq [IntPtr]::Zero){throw 'Main window did not open'}
-  # sandbox role exposes every screen and every text panel in 0.14.1
+  # sandbox role exposes every screen and every text panel in 0.15.0
   $combo=[FootballWindow]::GetDlgItem($hwnd,611)
   [FootballWindow]::SendMessage($combo,0x14E,[IntPtr]4,[IntPtr]::Zero)|Out-Null
   [FootballWindow]::SendMessage($hwnd,0x111,[IntPtr]600,[IntPtr]::Zero)|Out-Null
@@ -80,12 +80,12 @@ try{
       throw 'Could not resize game'
     }
     Start-Sleep -Milliseconds 100
-    foreach($page in 0..18){
+    foreach($page in 0..20){
       [FootballWindow]::SendMessage($hwnd,0x111,[IntPtr](100+$page),[IntPtr]::Zero)|Out-Null
       Check-Layout $hwnd $page "$width x $height"
     }
   }
-  Write-Host 'PASS: 19 screens x 3 sizes, including market filters and pitch; no text-panel overlap'
+  Write-Host 'PASS: 21 screens x 3 sizes, including market filters and pitch; no text-panel overlap'
 }finally{
   $proc.Refresh()
   if(-not $proc.HasExited){Stop-Process -Id $proc.Id -Force}
