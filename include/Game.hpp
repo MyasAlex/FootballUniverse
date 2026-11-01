@@ -71,6 +71,11 @@ struct JobApplication {
 };
 struct Message { int day=0; std::string title, body; };
 struct ScoutReport { int playerId=0, days=0, ability=0, potential=0; bool shortlisted=false; };
+struct TransferRecord {
+    int season=2026,day=0,totalDay=0,playerId=0,fromClub=-1,toClub=-1,fee=0;
+    int kind=0; // 0 permanent, 1 loan, 2 return from loan
+    std::string playerName;
+};
 enum class DealStage : int {
     ClubReview=0, ClubCounter=1, AgentOffer=2, AgentReview=3,
     AgentCounter=4, Completed=5, Rejected=6, Cancelled=7, RivalSigned=8
@@ -119,11 +124,16 @@ struct LiveMatch {
     int possessionTicksH=0, onTargetH=0, onTargetA=0;
     int passesH=0, passesA=0, completedH=0, completedA=0;
     int foulsH=0, foulsA=0, cornersH=0, cornersA=0;
+    // The live ball belongs to a real player. Text and pitch use this shared state.
+    bool possessionHome=true;
+    int ballCarrierId=-1, previousCarrierId=-1, attackPhase=0, lastAction=0;
     std::vector<MatchPlayerStat> playerStats;
 };
 
 enum class Role : int { Coach=0, Director=1, Owner=2, President=3, Sandbox=4 };
 enum class Difficulty : int { Easy=0, Realistic=1, Hard=2, Free=3 };
+enum class TacticalPlan : int { Balanced=0, Possession=1, Gegenpress=2, Counter=3, ProtectLead=4 };
+std::string tacticalPlanName(TacticalPlan plan);
 
 class Game {
 public:
@@ -141,6 +151,11 @@ public:
     const std::vector<CoachRecord>& coaches() const { return coaches_; }
     const JobApplication& jobApplication() const { return job_; }
     int managerReputation() const { return reputation_; }
+    bool canCoach() const;
+    bool canTransfer() const;
+    bool canInvest() const;
+    bool canCommercial() const;
+    std::string roleOverview() const;
     std::string jobMarketText(int clubId=-1) const;
     std::string applyForJob(int clubId);
     std::string acceptJobOffer();
@@ -156,6 +171,8 @@ public:
     const ScoutReport* scoutReport(int playerId) const;
     const TransferDeal* transferDeal(int playerId) const;
     const std::vector<TransferDeal>& transferDeals() const { return deals_; }
+    const std::vector<TransferRecord>& transferHistory() const { return transferHistory_; }
+    std::string worldMarketText(int playerId=-1) const;
     const std::vector<DeferredPayment>& deferredPayments() const { return payments_; }
     const std::vector<StaffMember>& staff() const { return staff_; }
     const std::vector<YouthProspect>& youthProspects() const { return youth_; }
@@ -188,11 +205,6 @@ public:
     int season() const { return season_; }
     int totalDays() const { return totalDays_; }
     Role role() const { return role_; }
-    bool canCoach() const { return role_==Role::Coach || role_==Role::Sandbox; }
-    bool canTransfer() const { return role_==Role::Coach || role_==Role::Director || role_==Role::Sandbox; }
-    bool canInvest() const { return role_==Role::Owner || role_==Role::Sandbox; }
-    bool canCommercial() const { return role_==Role::President || role_==Role::Sandbox; }
-    std::string roleOverview() const;
     Difficulty difficulty() const { return difficulty_; }
     const std::string& manager() const { return manager_; }
     const std::string& status() const { return status_; }
@@ -206,6 +218,11 @@ public:
     std::string cycleTrainingFocus(int playerId);
     std::string substitute(int playerOutId,int playerInId);
     std::string homeText() const;
+    std::string clubForm(int clubId) const;
+    std::string opponentReport() const;
+    std::string preparationText() const;
+    TacticalPlan recommendedMatchPlan() const;
+    std::string applyMatchPlan(TacticalPlan plan);
     std::string tacticsText() const;
     std::string financesText() const;
     std::string matchText() const;
@@ -268,6 +285,7 @@ private:
     std::vector<Message> inbox_;
     std::vector<ScoutReport> scouts_;
     std::vector<TransferDeal> deals_;
+    std::vector<TransferRecord> transferHistory_;
     std::vector<DeferredPayment> payments_;
     std::vector<StaffMember> staff_;
     std::vector<YouthProspect> youth_;
@@ -280,6 +298,9 @@ private:
     void processDeferredPayments();
     void processLoanReturns();
     void processTransferNegotiations();
+    void processAITransferMarket();
+    bool executeAITransfer(int playerId,int buyerClub,int fee,bool competing=false);
+    void recordTransfer(int playerId,int fromClub,int toClub,int fee,int kind=0);
     void finalizeTransfer(TransferDeal& deal);
     int lastTeamTalkDay_=-30;
     std::string manager_="Manager", status_;
@@ -320,8 +341,8 @@ private:
     void simulateOtherMatches();
     void simulateFast(Match& match);
     bool canFinance(int amount);
-    bool permissionSports() const;
     bool permissionCoaching() const;
+    bool permissionSports() const;
     bool permissionBusiness() const;
     void addMessage(std::string title, std::string body);
 };

@@ -1,4 +1,5 @@
 #include "Game.hpp"
+#include <algorithm>
 #ifdef NDEBUG
 #undef NDEBUG
 #endif

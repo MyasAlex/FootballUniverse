@@ -2,6 +2,7 @@ name: Compile Windows game (no PC compiler required)
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [main, master]
 
@@ -47,14 +48,14 @@ jobs:
           start "" "FootballUniverse.exe"
           '@ | Set-Content "$folder/PLAY.bat" -Encoding Ascii
           @'
-          Football Universe 0.12.1 - UI/role/animation fixes (source preview)
+          Football Universe 0.14.1 - Windows x64
           Run PLAY.bat or FootballUniverse.exe.
           C++ and Visual Studio are NOT required to run.
           Save files (career.fus) remain in the game folder if started through PLAY.bat.
-          This is a source-based UI fix preview (v0.12.1), not the user's v0.14 EXE.
-          Do NOT overwrite v0.14 or copy FUSAVE_13 careers here: this build does not read that newer save format.
-          Real-player offline dataset includes 280 players and is a June 2026 snapshot.
-          Windows GUI startup and panel geometry are checked in CI.
+          Includes UI fixes, role permissions and continuous match simulation.
+          Save files from v0.14 (FUSAVE_13) can be loaded; new saves use FUSAVE_14.
+          Back up your original career.fus before installing.
+          Windows GUI launch, UI panel layout and game-engine tests are checked in CI.
           '@ | Set-Content "$folder/READ_FIRST.txt" -Encoding UTF8
           @'
           @echo off
@@ -100,10 +101,9 @@ jobs:
           } finally {
             if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
           }
-      - name: Check real Windows panel geometry across resize and navigation
+      - name: Check all Windows panel layouts after navigation and resize
         shell: pwsh
-        run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass -File tests/windows_ui_layout_smoke.ps1
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tests/windows_ui_layout_smoke.ps1
       - name: Downloadable Windows ZIP
         uses: actions/upload-artifact@v4
         with:

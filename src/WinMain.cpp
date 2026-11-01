@@ -11,7 +11,10 @@
 #include <cstring>
 #include <iomanip>
 #include <cmath>
+#include <stdexcept>
 #include "Game.hpp"
+#include "PlayerSearch.hpp"
+#include "CareerStorage.hpp"
 
 namespace {
 void trace(const char* message) noexcept {
@@ -38,8 +41,14 @@ fu::Game& game() {
 }
 HINSTANCE appInstance{};
 HWND mainWindow{}, mainText{}, listControl{}, inputControl{}, titleText{}, subtitleText{}, statusText{}, pitchWindow{}, clubLogoWindow{};
-HWND nav[16]{}, actions[6]{};
+constexpr int NAV_COUNT=19;
+constexpr int PREPARATION_PAGE=16;
+constexpr int WORLD_MARKET_PAGE=17, SAVES_PAGE=18;
+HWND nav[NAV_COUNT]{}, actions[6]{};
 HWND setupName{}, setupClub{}, setupRole{}, setupDifficulty{}, setupLeagues{}, setupHelp{}, setupStart{}, setupLoad{};
+HWND searchName{},searchPosition{},searchAge{},searchPrice{},searchSort{},searchApply{},searchReset{},searchCount{};
+HWND searchLabels[5]{};
+fu::PlayerSearchFilter marketFilter;
 HFONT uiFont{}, titleFont{}, monoFont{}, smallFont{};
 HBRUSH backgroundBrush{}, surfaceBrush{}, inputBrush{};
 ULONG_PTR gdiplusToken{};
@@ -72,9 +81,11 @@ std::vector<int> visibleIds;
 std::vector<int> activeNavigation;
 int lastListIndex=0;
 std::wstring detailText;
-const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Карьера тренера"};
-const int NAV_START=100, ACTION_START=300, LIST_ID=501, SETUP_START=600,
-          SETUP_LOAD=601, SETUP_CLUB=602, SETUP_LEAGUES=603, SETUP_ROLE=611;
+const std::wstring navLabels[]={L"Обзор клуба",L"Состав",L"Тактика",L"Тренировки",L"Матч",L"Турнирная таблица",L"Трансферы",L"Контракты",L"Разговоры",L"Болельщики",L"Финансы",L"Академия",L"Почта",L"Календарь / кубки",L"Настройки",L"Карьера тренера",L"Подготовка к матчу",L"Мировой рынок",L"Сохранения"};
+static_assert(sizeof(navLabels)/sizeof(navLabels[0])==NAV_COUNT);
+const int NAV_START=100, ACTION_START=300, LIST_ID=501, SETUP_START=600, SETUP_LOAD=601, SETUP_CLUB=602, SETUP_LEAGUES=603;
+constexpr int SEARCH_NAME=700,SEARCH_POSITION=701,SEARCH_AGE=702,SEARCH_PRICE=703,
+              SEARCH_SORT=704,SEARCH_APPLY=705,SEARCH_RESET=706;
 std::string saveFile="career.fus";
 
 std::wstring wide(const std::string& s){
@@ -104,11 +115,14 @@ void setText(HWND h,const std::string& text){
 }
 std::wstring money(int v){std::wostringstream o;o<<std::fixed<<std::setprecision(1)<<v/1000000.0<<L" млн €";return o.str();}
 HWND create(const wchar_t* kind, const wchar_t* label,DWORD style,int id=0,DWORD ex=0,HWND parent=nullptr){
-    HWND wnd=CreateWindowExW(ex,kind,label,style,0,0,100,30,parent?parent:mainWindow,HMENU(INT_PTR(id)),appInstance,nullptr);
+    HWND wnd=CreateWindowExW(ex,kind,label,style|WS_CLIPSIBLINGS,0,0,100,30,parent?parent:mainWindow,HMENU(INT_PTR(id)),appInstance,nullptr);
     SendMessageW(wnd,WM_SETFONT,WPARAM(uiFont),TRUE);return wnd;
 }
 void show(HWND wnd,bool visible){if(wnd)ShowWindow(wnd,visible?SW_SHOW:SW_HIDE);}
-void move(HWND wnd,int x,int y,int w,int h){if(wnd)MoveWindow(wnd,x,y,std::max(0,w),std::max(0,h),TRUE);}
+void move(HWND wnd,int x,int y,int w,int h){
+    if(wnd)SetWindowPos(wnd,nullptr,x,y,std::max(0,w),std::max(0,h),
+                        SWP_NOZORDER|SWP_NOACTIVATE|SWP_NOCOPYBITS);
+}
 void fillCombo(HWND combo,const std::vector<std::wstring>& items,int defaultItem){
     SendMessageW(combo,CB_RESETCONTENT,0,0);
     for(const auto& s:items)SendMessageW(combo,CB_ADDSTRING,0,LPARAM(s.c_str()));
@@ -120,6 +134,45 @@ void addList(std::wstring title,int id){
 int selectedId(){int pos=int(SendMessageW(listControl,LB_GETCURSEL,0,0));return pos>=0&&pos<int(visibleIds.size())?visibleIds[pos]:-1;}
 void textContent(const std::string& content){setText(mainText,content);SendMessageW(mainText,EM_SETSEL,0,0);SendMessageW(mainText,EM_SCROLLCARET,0,0);}
 void tell(const std::string& result){setText(statusText,result);}
+std::filesystem::path careerSlotPath(int slot){
+    if(slot==0)return saveFile;
+    return std::filesystem::path("saves")/("slot"+std::to_string(std::clamp(slot,1,3))+".fus");
+}
+void resetPlayback(){
+    autoPlayMatch=false;previousPitch={};currentPitch={};lastPlaybackTick=0;pitchTransitionTick=0;
+}
+void showSearchControls(bool visible){
+    for(auto control:{searchName,searchPosition,searchAge,searchPrice,searchSort,searchApply,searchReset,searchCount})show(control,visible);
+    for(auto label:searchLabels)show(label,visible);
+}
+void resetPlayerSearch(){
+    marketFilter=fu::PlayerSearchFilter{};shortlistOnly=false;
+    SetWindowTextW(searchName,L"");SetWindowTextW(searchAge,L"50");SetWindowTextW(searchPrice,L"500000000");
+    SendMessageW(searchPosition,CB_SETCURSEL,0,0);SendMessageW(searchSort,CB_SETCURSEL,0,0);
+}
+bool readPlayerSearch(){
+    auto filter=marketFilter;
+    filter.name=utf8(getText(searchName));
+    const int position=int(SendMessageW(searchPosition,CB_GETCURSEL,0,0));
+    filter.position=position<=0?std::string{}:utf8(getText(searchPosition));
+    auto number=[](HWND control,int fallback,int maximum){
+        const std::wstring value=getText(control);
+        if(value.empty())return fallback;
+        size_t consumed=0;
+        const long long parsed=std::stoll(value,&consumed);
+        if(consumed!=value.size()||parsed<0||parsed>maximum)throw std::out_of_range("filter");
+        return int(parsed);
+    };
+    try{
+        filter.maxAge=number(searchAge,50,100);
+        filter.maxValue=number(searchPrice,500000000,2000000000);
+    }catch(...){tell("Возраст: 15–100. Цена: целое число от 0 до 2 000 000 000 €.");return false;}
+    if(filter.maxAge<15){tell("Максимальный возраст должен быть не меньше 15 лет.");return false;}
+    const int sort=int(SendMessageW(searchSort,CB_GETCURSEL,0,0));
+    filter.sort=static_cast<fu::PlayerSort>(std::clamp(sort,0,5));
+    filter.shortlistOnly=shortlistOnly;
+    marketFilter=std::move(filter);return true;
+}
 std::string playerDetails(int id){
     const fu::Player* p=game().findPlayer(id);
     if(!p)return "Выберите игрока из списка.";
@@ -159,50 +212,104 @@ std::string playerDetails(int id){
     }
     else o<<"СГЕНЕРИРОВАННЫЙ ИГРОК (демо)\n";
     o<<"Навыки, трансферная стоимость и зарплата — игровые оценки, не данные FIFA/FM.\n";
+    o<<"\n"<<game().worldMarketText(id);
     return o.str();
+}
+bool roleHasPage(int screen){
+    if(!started||game().difficulty()==fu::Difficulty::Free||
+       game().role()==fu::Role::Sandbox)return true;
+    switch(game().role()){
+    case fu::Role::Coach: return screen!=9;
+    case fu::Role::Director: return screen!=2&&screen!=3&&screen!=8&&
+             screen!=9&&screen!=15&&screen!=PREPARATION_PAGE;
+    case fu::Role::Owner: return screen==0||screen==1||screen==4||screen==5||
+             screen==10||screen==11||screen==12||screen==13||
+             screen==14||screen==SAVES_PAGE;
+    case fu::Role::President: return screen==0||screen==1||screen==4||
+             screen==5||screen==9||screen==10||screen==11||
+             screen==12||screen==13||screen==14||screen==SAVES_PAGE;
+    case fu::Role::Sandbox: return true;
+    }
+    return false;
+}
+bool actionAllowed(int screen,int action){
+    const bool coach=game().canCoach(),sport=game().canTransfer();
+    const bool invest=game().canInvest(),commerce=game().canCommercial();
+    switch(screen){
+    case 1:return action==3?sport:coach;
+    case 2:case 3:case 8:case PREPARATION_PAGE:return action==5||coach;
+    case 4:return (action!=3&&action!=5)||coach;
+    case 6:return action==3||sport;
+    case 7:return action==1||sport;
+    case 9:return commerce;
+    case 10:return action<3?invest:commerce;
+    case 11:
+        if(action<=1)return sport;
+        if(action==2||action==5)return sport||invest||commerce;
+        return coach;
+    case WORLD_MARKET_PAGE:
+        return action!=3||coach;
+    case 15:return action>=3||coach;
+    default:return true;
+    }
 }
 void arrange(){
     if(!mainWindow)return;
     RECT r{};GetClientRect(mainWindow,&r);
-    // Always use the REAL client rectangle. Inflating it caused text panels
-    // and buttons to be drawn over one another in resized/fullscreen windows.
     const int w=std::max(1,int(r.right-r.left)),h=std::max(1,int(r.bottom-r.top));
-    if(w<580||h<440)return; // Avoid a partially laid-out intermediate WM_SIZE.
-    const int sidebarWidth=std::clamp(w/5,160,205);
+    if(w<580||h<440)return; // Incomplete WM_SIZE during minimize.
+    const int sidebarWidth=std::clamp(w/5,165,215);
     const int left=sidebarWidth+12,right=w-20,bodyWidth=right-left;
     if(!started){
-        move(titleText,45,25,std::max(290,w-215),48);
-        move(subtitleText,45,78,std::max(290,w-215),35);
+        move(titleText,45,25,w-215,48);move(subtitleText,45,78,w-215,35);
         move(clubLogoWindow,w-150,24,105,105);
         move(setupName,45,160,400,35);move(setupClub,45,215,400,300);
         move(setupRole,45,270,400,230);move(setupDifficulty,45,325,400,230);
-        move(setupLeagues,470,160,std::max(180,w-505),230);
+        move(setupLeagues,470,160,std::max(300,w-515),270);
         move(setupHelp,45,387,400,150);
         move(setupStart,45,550,220,44);move(setupLoad,277,550,220,44);
         move(statusText,40,h-52,w-80,36);
     }else{
-        move(titleText,left,24,std::max(120,bodyWidth-115),40);
-        move(subtitleText,left,65,std::max(120,bodyWidth-115),22);
+        move(titleText,left,24,bodyWidth-100,40);
+        move(subtitleText,left,65,bodyWidth-100,22);
         move(clubLogoWindow,right-85,12,82,82);
         // Adaptive navigation: prevent the bottom items from overlapping the status bar.
-        const int navStep=std::clamp((h-167)/16,24,37);
-        for(int i=0;i<16;++i)
-            move(nav[i],10,74+i*navStep,sidebarWidth-18,std::max(22,navStep-2));
-        bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15;
+        int visibleNav=0;
+        for(int i=0;i<NAV_COUNT;++i)if(roleHasPage(i))++visibleNav;
+        const int navStep=std::clamp((h-162)/std::max(1,visibleNav),20,37);
+        int row=0;
+        for(int i=0;i<NAV_COUNT;++i)if(roleHasPage(i))
+            move(nav[i],10,74+row++*navStep,sidebarWidth-18,
+                 std::max(18,navStep-2));
+        bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15||page==SAVES_PAGE;
         bool pitchNeeded=(page==4&&showPitch);
-        const int contentY=102;
-        const int actionsTop=h-121;
-        const int inputTop=h-169;
-        const int contentH=std::max(90,inputTop-contentY-12);
+        int contentY=page==6?210:102;
+        int contentH=std::max(85,h-284-(contentY-102));
+        if(page==6){
+            const int nameW=bodyWidth*34/100,positionW=100,ageW=95;
+            const int priceW=bodyWidth-nameW-positionW-ageW-24;
+            const int positions[]={left,left+nameW+8,left+nameW+positionW+16,left+nameW+positionW+ageW+24};
+            const int widths[]={nameW,positionW,ageW,priceW};
+            const HWND fields[]={searchName,searchPosition,searchAge,searchPrice};
+            for(int i=0;i<4;++i){
+                move(searchLabels[i],positions[i],99,widths[i],21);
+                move(fields[i],positions[i],122,widths[i],i==1?360:29);
+            }
+            move(searchLabels[4],left,158,105,21);
+            move(searchSort,left+108,155,190,250);
+            move(searchApply,left+308,155,105,31);
+            move(searchReset,left+421,155,92,31);
+            move(searchCount,left+521,157,bodyWidth-521,40);
+        }
         if(listNeeded){
             if(pitchNeeded){
                 // Match mode: dominant animated stadium, match commentary below,
                 // selection/substitutions to the right (no text overlays).
                 const int side=std::clamp(bodyWidth*31/100,175,320);
-                const int pitchW=std::max(150,bodyWidth-side-12);
-                const int pitchH=std::max(115,contentH*68/100);
+                const int pitchW=std::max(145,bodyWidth-side-12);
+                const int pitchH=std::clamp(contentH*65/100,100,std::max(100,contentH-48));
                 move(pitchWindow,left,contentY,pitchW,pitchH);
-                move(mainText,left,contentY+pitchH+8,pitchW,std::max(40,contentH-pitchH-8));
+                move(mainText,left,contentY+pitchH+8,pitchW,std::max(50,contentH-pitchH-8));
                 move(listControl,left+pitchW+12,contentY,side,contentH);
             }else{
                 int listWidth=std::clamp(bodyWidth*39/100,175,360);
@@ -213,19 +320,18 @@ void arrange(){
         }else if(pitchNeeded){
             int textW=bodyWidth*48/100;
             move(mainText,left,contentY,textW,contentH);
-            move(pitchWindow,left+textW+14,contentY,bodyWidth-textW-14,300);
+            move(pitchWindow,left+textW+14,contentY,bodyWidth-textW-14,contentH);
         }else move(mainText,left,contentY,bodyWidth,contentH);
-        move(inputControl,left,inputTop,bodyWidth,35);
-        int buttonW=std::max(55,(bodyWidth-4*8)/5);
-        for(int i=0;i<5;++i)move(actions[i],left+i*(buttonW+8),actionsTop,buttonW,38);
+        move(inputControl,left,h-168,bodyWidth,37);
+        int buttonW=std::max(65,(bodyWidth-5*8)/5);
+        for(int i=0;i<5;++i)move(actions[i],left+i*(buttonW+8),h-120,buttonW,39);
         move(actions[5],left,h-74,buttonW,32);
-        move(statusText,left+buttonW+12,h-74,
-                        std::max(50,bodyWidth-buttonW-12),34);
+        move(statusText,left+buttonW+12,h-74,bodyWidth-buttonW-12,34);
     }
 }
 std::vector<std::wstring> buttonTexts(int p){
     switch(p){
-        case 0:return {L"День +1",L"До матча (+7)",L"Сохранить",L"Загрузить",L"Матч"};
+        case 0:return {L"День +1",L"До матча (+7)",L"Сохранить",L"Загрузить",L"Подготовка"};
         case 1:return {L"В основу",L"Автосостав",L"Разговор",L"Контракт",L"Капитан"};
         case 2:return {L"Сменить схему",L"Сменить стиль",L"Прессинг",L"Темп",L"Ширина"};
         case 3:return {L"План команды",L"Фокус игрока",L"Состав",L"День +1",L"Наставник"};
@@ -241,6 +347,9 @@ std::vector<std::wstring> buttonTexts(int p){
         case 13:return {L"Календарь",L"Кубки",L"Победители",L"Бомбардиры",L"Отчёт матча"};
         case 14:return {L"Вкл./выкл. лигу",L"Новая карьера",L"Сохранить",L"Загрузить",L"Реальная база"};
         case 15:return {L"Подать заявку",L"Принять оффер",L"Отозвать",L"Рынок тренеров",L"Справка"};
+        case PREPARATION_PAGE:return {L"Баланс",L"Контроль мяча",L"Прессинг",L"Контратаки",L"Удержать счёт"};
+        case WORLD_MARKET_PAGE:return {L"Обновить",L"Трансферы",L"Календарь",L"Подготовка",L"Сохранить"};
+        case SAVES_PAGE:return {L"Сохранить",L"Загрузить",L"Из копии",L"Обзор",L"Обновить"};
         default:return {L"Обзор",L"—",L"—",L"—",L"—"};
     }
 }
@@ -355,12 +464,8 @@ void drawPitch(HDC dc,RECT area){
     if(frame.homeClub>=0){
         // The ball is connected to the actual carrier/pass/shot event at this minute.
         // Interpolation is visual only: it never changes the underlying match result.
-        // Start at the PREVIOUSLY RENDERED ball, not a newly guessed passer.
-        // The old renderer snapped the ball to frame.ballFromX each minute.
-        const bool sameFixture=previousPitch.homeClub==frame.homeClub&&
-                               previousPitch.awayClub==frame.awayClub;
-        const float fromX=px(float(sameFixture?previousPitch.ballX:frame.ballFromX));
-        const float fromY=py(float(sameFixture?previousPitch.ballY:frame.ballFromY));
+        const float fromX=px(float(frame.ballFromX));
+        const float fromY=py(float(frame.ballFromY));
         const float endX=px(float(frame.ballX));
         const float endY=py(float(frame.ballY));
         const float ballX=fromX+(endX-fromX)*eased;
@@ -473,11 +578,20 @@ LRESULT CALLBACK logoProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     return DefWindowProcW(hwnd,msg,w,l);
 }
 void showPage(int next);
+void updateTransferOfferInput(){
+    const auto* deal=game().transferDeal(selectedId());
+    if(deal&&(deal->stage==fu::DealStage::AgentOffer||deal->stage==fu::DealStage::AgentCounter)){
+        SetWindowTextW(inputControl,L"55000 3");
+    }else if(deal&&deal->stage==fu::DealStage::ClubCounter){
+        SetWindowTextW(inputControl,std::to_wstring(deal->askingFee).c_str());
+    }else SetWindowTextW(inputControl,L"10000000");
+}
 void detailForSelected(){
     int id=selectedId();
     if(id<0){
         if(page==11)textContent(game().academyText());
         else if(page==15)textContent(game().jobMarketText());
+        else if(page==6)textContent("По заданным фильтрам футболистов нет. Измените ограничения или нажмите «Сброс».\n\nФильтры поиска расположены сверху. Поле внизу предназначено только для трансферного предложения.");
         else textContent("Выберите пункт из списка.");
         return;
     }
@@ -504,6 +618,9 @@ void detailForSelected(){
     else if(page==11)textContent(game().academyText());
     else if(page==5)textContent(game().standings(id));
     else if(page==15)textContent(game().jobMarketText(id));
+    else if(page==SAVES_PAGE)textContent((id==0?"БЫСТРОЕ СОХРАНЕНИЕ":("СЛОТ "+std::to_string(id)))+"\n\n"+
+        fu::careerSlotSummary(careerSlotPath(id))+"\n\nФайл: "+careerSlotPath(id).generic_string()+
+        "\n\nПри сохранении создаётся резервная копия предыдущей версии.\n«Из копии» загружает резервную версию, сохраняя основной файл.");
     else if(page==12){const auto& inbox=game().inbox();if(id>=0&&id<int(inbox.size()))textContent(inbox[id].title+"\n\n"+inbox[id].body);}
     else if(page==14){const auto& l=game().leagues();if(id>=0&&id<int(l.size()))textContent(game().standings(id)+"\n\nНажмите «Вкл./выкл. лигу», чтобы переключить детализацию.\nКлубная лига всегда активна.");}
 }
@@ -525,14 +642,18 @@ void populate(){
             addList(wide("#"+std::to_string(p->id)+" "+marker+p->position+" "+p->name+(p->injured?" [ТРАВМА]":"")),id);
         }
     }else if(page==6){
-        for(int id:game().transferCandidates(shortlistOnly)){
+        marketFilter.shortlistOnly=shortlistOnly;
+        const auto results=fu::searchPlayers(game(),marketFilter);
+        setText(searchCount,"Найдено: "+std::to_string(results.size()));
+        for(int id:results){
             const auto* p=game().findPlayer(id);if(!p)continue;
             const auto* report=game().scoutReport(id);
             std::string marker=report&&report->shortlisted?"[*] ":report&&report->days>=5?"[ОТЧЁТ] ":"";
             if(const auto* d=game().transferDeal(id)){
                 if(int(d->stage)<=4)marker="[СДЕЛКА] "+marker;
             }
-            addList(wide(marker+p->position+" | "+p->name+" | "+std::to_string(p->value/1000000.0)+" млн €"),id);
+            addList(wide("#"+std::to_string(id)+" "+marker+p->position+" | "+p->name+
+                " | "+std::to_string(p->age)+" лет | "+std::to_string(p->value)+" €"),id);
         }
     }else if(page==11){
         for(const auto& p:game().youthProspects())if(p.club==game().teamId()){
@@ -554,61 +675,45 @@ void populate(){
     }else if(page==12){
         const auto& inbox=game().inbox();
         for(int j=int(inbox.size())-1;j>=0;--j)addList(wide(inbox[j].title),j);
+    }else if(page==SAVES_PAGE){
+        for(int slot=1;slot<=3;++slot){
+            const auto summary=fu::careerSlotSummary(careerSlotPath(slot));
+            addList(wide("Слот "+std::to_string(slot)+" | "+summary.substr(0,summary.find('\n'))),slot);
+        }
+        const auto quickSummary=fu::careerSlotSummary(careerSlotPath(0));
+        addList(wide("Быстрое сохранение | "+quickSummary.substr(0,quickSummary.find('\n'))),0);
     }
     if(!visibleIds.empty()){
         int i=std::clamp(lastListIndex,0,int(visibleIds.size())-1);
         SendMessageW(listControl,LB_SETCURSEL,i,0);
     }
 }
-bool actionAllowed(int screen,int action){
-    const bool coach=game().canCoach(),sport=game().canTransfer();
-    const bool invest=game().canInvest(),commercial=game().canCommercial();
-    switch(screen){
-    case 1:return action==2||action==3||coach;
-    case 2:return action==5||coach;
-    case 3:return action==2||action==3||coach;
-    case 4:return action!=3&&action!=5||coach;
-    case 6:return action==3||sport;
-    case 7:return action==1||sport;
-    case 8:return coach;
-    case 9:return commercial;
-    case 10:return action<=2?invest:commercial;
-    case 11:return (action==3||action==4)?coach:true;
-    case 15:return action>=3||coach;
-    default:return true;
-    }
-}
-std::wstring currentRoleLabel(){
-    switch(game().role()){
-    case fu::Role::Coach:return L"ТРЕНЕР";
-    case fu::Role::Director:return L"СПОРТДИР";
-    case fu::Role::Owner:return L"ВЛАДЕЛЕЦ";
-    case fu::Role::President:return L"ПРЕЗИДЕНТ";
-    case fu::Role::Sandbox:return L"ВСЕ ПРАВА";
-    }
-    return L"";
-}
 void showPage(int next){
     if(!started)return;
+    const bool samePage=page==next;
+    const int preservedId=samePage?selectedId():-1;
     if(next!=4)autoPlayMatch=false;
-    page=std::clamp(next,0,15);
-    lastListIndex=0;
+    page=std::clamp(next,0,NAV_COUNT-1);
+    if(!roleHasPage(page))page=0;
+    SendMessageW(mainWindow,WM_SETREDRAW,FALSE,0);
+    if(!samePage)lastListIndex=0;
     // Owner-draw nav does not automatically repaint when a different page is selected.
     for(auto& button:nav)if(button)InvalidateRect(button,nullptr,TRUE);
-    bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15;
-    show(mainText,true);
+    bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15||page==SAVES_PAGE;
     show(listControl,listNeeded);show(inputControl,page==1||page==6||page==7||page==8||page==9||page==11||page==3||(page==4&&game().hasLiveMatch()));
+    showSearchControls(page==6);
     show(pitchWindow,page==4&&showPitch);
-    for(int i=0;i<16;++i)show(nav[i],true);
+    for(int i=0;i<NAV_COUNT;++i)show(nav[i],roleHasPage(i));
     auto labels=buttonTexts(page);
+    if(page==0&&!game().canCoach())labels[4]=L"Матч";
     for(int i=0;i<5;++i){
         SetWindowTextW(actions[i],labels[i].c_str());
         show(actions[i],labels[i]!=L"—");
         EnableWindow(actions[i],actionAllowed(page,i)?TRUE:FALSE);
     }
-    show(actions[5],page==1||page==2||page==6||page==8||page==10||page==11||(page==4&&game().hasLiveMatch()));
-    SetWindowTextW(actions[5],page==1?L"Вице-капитан":page==6?L"Отменить сделку":page==8?L"Жёсткий разговор":page==11?L"Уволить":page==2?L"Матч":page==4?L"Заменить":L"Билет −5 €");
+    show(actions[5],page==1||page==2||page==6||page==8||page==10||page==11||page==PREPARATION_PAGE||(page==4&&game().hasLiveMatch()));
     EnableWindow(actions[5],actionAllowed(page,5)?TRUE:FALSE);
+    SetWindowTextW(actions[5],page==1?L"Вице-капитан":page==6?L"Отменить сделку":page==8?L"Жёсткий разговор":page==11?L"Уволить":page==2?L"Подготовка":page==PREPARATION_PAGE?L"Матч":page==4?L"Заменить":L"Билет −5 €");
     if(page==6)SetWindowTextW(actions[3],shortlistOnly?L"Все игроки":L"Короткий список");
     if(page==4){
         SetWindowTextW(actions[0],game().hasLiveMatch()?L"+15 минут":L"Начать матч");
@@ -616,29 +721,33 @@ void showPage(int next){
         updatePitchFrame();
     }
     SetWindowTextW(titleText,navLabels[page].c_str());
+    std::wstring roleName=game().role()==fu::Role::Coach?L"ТРЕНЕР":
+        game().role()==fu::Role::Director?L"СПОРТДИР":
+        game().role()==fu::Role::Owner?L"ВЛАДЕЛЕЦ":
+        game().role()==fu::Role::President?L"ПРЕЗИДЕНТ":L"ПЕСОЧНИЦА";
     std::wstring sub=wide(game().myClub().name)+L"   •   "+wide(game().dateString())+
-        L"   •   "+currentRoleLabel()+L"   •   Сезон "+
-        std::to_wstring(game().season())+L"/"+std::to_wstring((game().season()+1)%100);
+        L"   •   "+roleName+L"   •   Сезон "+std::to_wstring(game().season())+
+        L"/"+std::to_wstring((game().season()+1)%100);
     SetWindowTextW(subtitleText,sub.c_str());
     if(page==1)SetWindowTextW(inputControl,L"ID игрока основы");
     if(page==3)SetWindowTextW(inputControl,L"ID наставника");
     if(page==11)SetWindowTextW(inputControl,L"0 80");
     if(page==4)SetWindowTextW(inputControl,L"ID игрока с поля");
-    if(page==6){
-        const auto* d=game().transferDeal(selectedId());
-        if(d&&(d->stage==fu::DealStage::AgentOffer||d->stage==fu::DealStage::AgentCounter)){
-            SetWindowTextW(inputControl,L"55000 3");
-        }else if(d&&d->stage==fu::DealStage::ClubCounter){
-            SetWindowTextW(inputControl,std::to_wstring(d->askingFee).c_str());
-        }else SetWindowTextW(inputControl,L"10000000");
-    }
     if(page==7)SetWindowTextW(inputControl,L"30000 3");
     if(page==8)SetWindowTextW(inputControl,L"Спасибо за работу! Как у тебя дела?");
     if(page==9)SetWindowTextW(inputControl,L"Спасибо за вашу поддержку клуба!");
     populate();
+    if(preservedId>=0){
+        const auto found=std::find(visibleIds.begin(),visibleIds.end(),preservedId);
+        if(found!=visibleIds.end()){
+            lastListIndex=int(found-visibleIds.begin());
+            SendMessageW(listControl,LB_SETCURSEL,lastListIndex,0);
+        }
+    }
+    if(page==6)updateTransferOfferInput();
     switch(page){
         case 0:textContent(game().homeText());break;
-        case 1:case 3:case 5:case 6:case 7:case 8:case 11:case 12:case 14:detailForSelected();break;
+        case 1:case 3:case 5:case 6:case 7:case 8:case 11:case 12:case 14:case SAVES_PAGE:detailForSelected();break;
         case 2:textContent(game().tacticsText());break;
 
         case 4:textContent(game().matchText());break;
@@ -652,36 +761,15 @@ void showPage(int next){
             else textContent(game().latestMatchReport());
             break;
         case 15:detailForSelected();break;
+        case PREPARATION_PAGE:textContent(game().preparationText());break;
+        case WORLD_MARKET_PAGE:textContent(game().worldMarketText());break;
     }
-    tell(game().status());
-    arrange();
+    tell(game().status());arrange();
+    SendMessageW(mainWindow,WM_SETREDRAW,TRUE,0);
     RedrawWindow(mainWindow,nullptr,nullptr,
         RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW);
     InvalidateRect(pitchWindow,nullptr,TRUE);
     InvalidateRect(clubLogoWindow,nullptr,TRUE);
-}
-void updateSetupHelp(){
-    if(!setupRole||!setupHelp)return;
-    const int role=int(SendMessageW(setupRole,CB_GETCURSEL,0,0));
-    static const wchar_t* descriptions[]={
-        L"ГЛАВНЫЙ ТРЕНЕР\r\n"
-        L"Состав, матчи, тактика, тренировки и разговоры.\r\n"
-        L"Может предлагать трансферы, но не утверждает финансы.",
-        L"СПОРТИВНЫЙ ДИРЕКТОР\r\n"
-        L"Покупки, продажи, аренды, контракты и скаутинг.\r\n"
-        L"Матчи смотрит, но не командует игроками на поле.",
-        L"ВЛАДЕЛЕЦ\r\n"
-        L"Крупные вложения в стадион, базу и академию.\r\n"
-        L"Не занимается тактикой, трансферами и билетами.",
-        L"ПРЕЗИДЕНТ\r\n"
-        L"Спонсоры, билеты, болельщики и коммерция.\r\n"
-        L"Не управляет составом, трансферами и инвестициями владельца.",
-        L"ПЕСОЧНИЦА\r\n"
-        L"Все полномочия: тренер, директор, владелец и президент.\r\n"
-        L"Ограничения других ролей отключены."
-    };
-    SetWindowTextW(setupHelp,descriptions[std::clamp(role,0,4)]);
-    InvalidateRect(setupHelp,nullptr,TRUE);
 }
 void showSetup(){
     trace("showSetup BEGIN");
@@ -691,7 +779,7 @@ void showSetup(){
     for(auto& w:nav)show(w,false);
     for(auto& w:actions)show(w,false);
     show(listControl,false);show(mainText,false);show(inputControl,false);show(pitchWindow,false);
-    shortlistOnly=false;
+    showSearchControls(false);resetPlayerSearch();
     show(setupName,true);show(setupClub,true);show(setupRole,true);show(setupDifficulty,true);
     show(setupLeagues,true);show(setupHelp,true);show(setupStart,true);show(setupLoad,true);
     SetWindowTextW(titleText,L"FOOTBALL UNIVERSE");
@@ -705,7 +793,7 @@ void showSetup(){
     SendMessageW(setupLeagues,LB_RESETCONTENT,0,0);
     for(const auto& l:game().leagues())SendMessageW(setupLeagues,LB_ADDSTRING,0,LPARAM(wide(l.country+" — "+l.name).c_str()));
     for(int i=0;i<6;++i)SendMessageW(setupLeagues,LB_SETSEL,i<2,i);
-    updateSetupHelp();
+    SetWindowTextW(setupHelp,L"Укажите имя, клуб, должность, сложность.\nВ списке справа отметьте активные лиги (Ctrl/Shift не нужны).\nЛига выбранного клуба включится автоматически.");
     tell("Демо-база: известные клубы, процедурные игроки. Полная лицензированная база ещё не добавлена.");
     trace("showSetup before arrange");show(clubLogoWindow,true);arrange();InvalidateRect(clubLogoWindow,nullptr,TRUE);trace("showSetup END");
 }
@@ -716,13 +804,17 @@ void startCareer(){
     std::vector<int> active;
     for(int i=0;i<int(game().leagues().size());++i)if(SendMessageW(setupLeagues,LB_GETSEL,i,0)>0)active.push_back(i);
     game().newCareer(utf8(getText(setupName)),club,fu::Role(std::clamp(role,0,4)),fu::Difficulty(std::clamp(diff,0,3)),active);
-    shortlistOnly=false;
+    resetPlayerSearch();resetPlayback();
     started=true;
     show(setupName,false);show(setupClub,false);show(setupRole,false);show(setupDifficulty,false);
     show(setupLeagues,false);show(setupHelp,false);show(setupStart,false);show(setupLoad,false);
     show(mainText,true);show(clubLogoWindow,true);showPage(0);
 }
 void trigger(int action){
+    if(!actionAllowed(page,action)){
+        tell("Эта операция недоступна для выбранной должности.");
+        return;
+    }
     int id=selectedId();
     std::string text=utf8(getText(inputControl));
     std::string response;
@@ -730,9 +822,9 @@ void trigger(int action){
     if(page==0){
         if(action==0)game().advance(1);
         if(action==1)game().advance(7);
-        if(action==2)response=game().save(saveFile);
-        if(action==3)response=game().load(saveFile);
-        if(action==4){go(4);return;}
+        if(action==2)response=fu::saveCareerSafely(game(),saveFile);
+        if(action==3){response=game().load(saveFile);if(response.find("загружена")!=std::string::npos)resetPlayback();}
+        if(action==4){go(game().canCoach()?PREPARATION_PAGE:4);return;}
     }else if(page==1){
         if(action==0){
             try{response=game().swapStarter(id,std::stoi(text));}
@@ -749,7 +841,7 @@ void trigger(int action){
         if(action==2)game().changePressing();
         if(action==3)game().changeTempo();
         if(action==4)game().changeWidth();
-        if(action==5){go(4);return;}
+        if(action==5){go(PREPARATION_PAGE);return;}
     }else if(page==3){
         if(action==0)game().changeTraining();
         if(action==1)response=game().cycleTrainingFocus(id);
@@ -890,8 +982,8 @@ void trigger(int action){
     else if(page==14){
         if(action==0)game().toggleLeague(id);
         if(action==1){showSetup();return;}
-        if(action==2)response=game().save(saveFile);
-        if(action==3)response=game().load(saveFile);
+        if(action==2)response=fu::saveCareerSafely(game(),saveFile);
+        if(action==3){response=game().load(saveFile);if(response.find("загружена")!=std::string::npos)resetPlayback();}
         if(action==4){
             bool ok=game().importPlayers("data/real_players.csv");
             response=game().status();
@@ -903,28 +995,39 @@ void trigger(int action){
         if(action==2)response=game().withdrawApplication();
         if(action==3)response=game().jobMarketText(id);
         if(action==4){textContent(game().helpText());return;}
+    }else if(page==PREPARATION_PAGE){
+        if(action>=0&&action<5)response=game().applyMatchPlan(static_cast<fu::TacticalPlan>(action));
+        if(action==5){go(4);return;}
+    }else if(page==WORLD_MARKET_PAGE){
+        if(action==1){go(6);return;}
+        if(action==2){historyView=0;go(13);return;}
+        if(action==3){go(PREPARATION_PAGE);return;}
+        if(action==4)response=fu::saveCareerSafely(game(),saveFile);
+    }else if(page==SAVES_PAGE){
+        if(action==0)response=fu::saveCareerSafely(game(),careerSlotPath(id));
+        if(action==1)response=game().load(careerSlotPath(id).string());
+        if(action==2)response=fu::loadCareerBackup(game(),careerSlotPath(id));
+        if((action==1||action==2)&&response.find("загружена")!=std::string::npos){
+            resetPlayback();resetPlayerSearch();
+        }
+        if(action==3){go(0);return;}
     }
-    int old=lastListIndex;
     showPage(page);
-    if(!visibleIds.empty()&&old<int(visibleIds.size())){
-        lastListIndex=old;
-        SendMessageW(listControl,LB_SETCURSEL,lastListIndex,0);detailForSelected();
-    }
     if(!response.empty())tell(response);
 }
 void drawButton(const DRAWITEMSTRUCT* dis){
     HDC dc=dis->hDC;RECT r=dis->rcItem;
-    bool navButton=dis->CtlID>=NAV_START&&dis->CtlID<NAV_START+16;
+    bool navButton=dis->CtlID>=NAV_START&&dis->CtlID<NAV_START+NAV_COUNT;
     bool primaryButton=(dis->CtlID>=ACTION_START&&dis->CtlID<ACTION_START+6)||(dis->CtlID==SETUP_START);
     COLORREF color=navButton?(page==int(dis->CtlID-NAV_START)?RGB(28,65,117):RGB(16,27,45)):
         (primaryButton?primary:RGB(32,52,81));
-    if(!navButton&&(dis->itemState&ODS_SELECTED))color=RGB(40,84,132);
-    if(dis->itemState&ODS_DISABLED)color=RGB(27,39,55);
+    if(dis->itemState&ODS_DISABLED)color=RGB(35,44,60);
+    else if(dis->itemState&ODS_SELECTED)color=RGB(40,84,132);
     HBRUSH brush=CreateSolidBrush(color);
     FillRect(dc,&r,brush);DeleteObject(brush);
     wchar_t text[256];GetWindowTextW(dis->hwndItem,text,256);
     SetBkMode(dc,TRANSPARENT);
-    SetTextColor(dc,(dis->itemState&ODS_DISABLED)?muted:white);
+    SetTextColor(dc,dis->itemState&ODS_DISABLED?muted:white);
     SelectObject(dc,uiFont);
     DrawTextW(dc,text,-1,&r,DT_SINGLELINE|DT_CENTER|DT_VCENTER|DT_END_ELLIPSIS);
     // Focus on an old nav button must not look like a second selected page.
@@ -942,18 +1045,35 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         SendMessageW(subtitleText,WM_SETFONT,WPARAM(smallFont),TRUE);
         statusText=create(L"STATIC",L"",WS_CHILD|WS_VISIBLE|SS_LEFT);
         SendMessageW(statusText,WM_SETFONT,WPARAM(smallFont),TRUE);
-        for(int i=0;i<16;++i)nav[i]=create(L"BUTTON",navLabels[i].c_str(),WS_CHILD|BS_OWNERDRAW,NAV_START+i);
+        for(int i=0;i<NAV_COUNT;++i)nav[i]=create(L"BUTTON",navLabels[i].c_str(),WS_CHILD|BS_OWNERDRAW,NAV_START+i);
         mainText=create(L"EDIT",L"",WS_CHILD|WS_VSCROLL|ES_LEFT|ES_MULTILINE|ES_READONLY|ES_AUTOVSCROLL,502,WS_EX_CLIENTEDGE);
         SendMessageW(mainText,WM_SETFONT,WPARAM(monoFont),TRUE);
         listControl=create(L"LISTBOX",L"",WS_CHILD|WS_VSCROLL|LBS_NOTIFY|LBS_NOINTEGRALHEIGHT,LIST_ID,WS_EX_CLIENTEDGE);
         SendMessageW(listControl,WM_SETFONT,WPARAM(smallFont),TRUE);
         inputControl=create(L"EDIT",L"",WS_CHILD|ES_AUTOHSCROLL|WS_TABSTOP,503,WS_EX_CLIENTEDGE);
+        const wchar_t* filterLabels[]={L"Имя / клуб",L"Позиция",L"Возраст до",L"Цена до, €",L"Сортировка"};
+        for(int i=0;i<5;++i){
+            searchLabels[i]=create(L"STATIC",filterLabels[i],WS_CHILD|SS_LEFT);
+            SendMessageW(searchLabels[i],WM_SETFONT,WPARAM(smallFont),TRUE);
+        }
+        searchName=create(L"EDIT",L"",WS_CHILD|ES_AUTOHSCROLL|WS_TABSTOP,SEARCH_NAME,WS_EX_CLIENTEDGE);
+        searchPosition=create(L"COMBOBOX",L"",WS_CHILD|CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,SEARCH_POSITION);
+        searchAge=create(L"EDIT",L"50",WS_CHILD|ES_NUMBER|ES_AUTOHSCROLL|WS_TABSTOP,SEARCH_AGE,WS_EX_CLIENTEDGE);
+        searchPrice=create(L"EDIT",L"500000000",WS_CHILD|ES_NUMBER|ES_AUTOHSCROLL|WS_TABSTOP,SEARCH_PRICE,WS_EX_CLIENTEDGE);
+        searchSort=create(L"COMBOBOX",L"",WS_CHILD|CBS_DROPDOWNLIST|WS_VSCROLL|WS_TABSTOP,SEARCH_SORT);
+        searchApply=create(L"BUTTON",L"Найти",WS_CHILD|BS_OWNERDRAW|WS_TABSTOP,SEARCH_APPLY);
+        searchReset=create(L"BUTTON",L"Сброс",WS_CHILD|BS_OWNERDRAW|WS_TABSTOP,SEARCH_RESET);
+        searchCount=create(L"STATIC",L"",WS_CHILD|SS_LEFT);
+        SendMessageW(searchCount,WM_SETFONT,WPARAM(smallFont),TRUE);
+        SendMessageW(searchName,EM_LIMITTEXT,120,0);SendMessageW(searchAge,EM_LIMITTEXT,3,0);SendMessageW(searchPrice,EM_LIMITTEXT,10,0);
+        fillCombo(searchPosition,{L"Любая",L"GK",L"DL",L"DC",L"DR",L"DM",L"MC",L"AMC",L"ML",L"MR",L"AML",L"AMR",L"ST"},0);
+        fillCombo(searchSort,{L"Цена ↑",L"Сила ↓",L"Потенциал ↓",L"Возраст ↑",L"Зарплата ↑",L"Имя А–Я"},0);
         for(int i=0;i<6;++i)actions[i]=create(L"BUTTON",L"",WS_CHILD|BS_OWNERDRAW|WS_TABSTOP,ACTION_START+i);
-        pitchWindow=CreateWindowExW(0,L"FU_Pitch",L"",WS_CHILD,0,0,10,10,hwnd,nullptr,appInstance,nullptr);
-        clubLogoWindow=CreateWindowExW(0,L"FU_ClubLogo",L"",WS_CHILD|WS_VISIBLE,0,0,10,10,hwnd,nullptr,appInstance,nullptr);
+        pitchWindow=CreateWindowExW(0,L"FU_Pitch",L"",WS_CHILD|WS_CLIPSIBLINGS,0,0,10,10,hwnd,nullptr,appInstance,nullptr);
+        clubLogoWindow=CreateWindowExW(0,L"FU_ClubLogo",L"",WS_CHILD|WS_VISIBLE|WS_CLIPSIBLINGS,0,0,10,10,hwnd,nullptr,appInstance,nullptr);
         setupName=create(L"EDIT",L"",WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL|WS_TABSTOP,610,WS_EX_CLIENTEDGE);
         setupClub=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,SETUP_CLUB);
-        setupRole=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,SETUP_ROLE);
+        setupRole=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,611);
         setupDifficulty=create(L"COMBOBOX",L"",WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,612);
         setupLeagues=create(L"LISTBOX",L"",WS_CHILD|WS_VISIBLE|WS_VSCROLL|LBS_MULTIPLESEL|LBS_NOINTEGRALHEIGHT,SETUP_LEAGUES,WS_EX_CLIENTEDGE);
         setupHelp=create(L"STATIC",L"",WS_CHILD|WS_VISIBLE|SS_LEFT);
@@ -965,13 +1085,14 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     }
     case WM_GETMINMAXINFO:{
         auto* info=reinterpret_cast<MINMAXINFO*>(l);
-        // The minimum remains small enough for common laptop displays;
-        // all children still lay out from the actual client size.
-        info->ptMinTrackSize.x=850;
-        info->ptMinTrackSize.y=680;
+        info->ptMinTrackSize.x=950;
+        info->ptMinTrackSize.y=760;
         return 0;
     }
-    case WM_SIZE:arrange();return 0;
+    case WM_SIZE:
+        arrange();
+        RedrawWindow(hwnd,nullptr,nullptr,RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN);
+        return 0;
     case WM_TIMER:{
         if(w!=PITCH_TIMER)return 0;
         if(started&&page==4){
@@ -998,20 +1119,27 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     }
     case WM_COMMAND:{
         int id=LOWORD(w), code=HIWORD(w);
-        if(id>=NAV_START&&id<NAV_START+16&&code==BN_CLICKED){
-        showPage(id-NAV_START);
-        // The previously focused owner-draw button must not remain visually active.
-        SetFocus(mainWindow);
-        return 0;
-    }
+        if(id>=NAV_START&&id<NAV_START+NAV_COUNT&&code==BN_CLICKED){
+            showPage(id-NAV_START);SetFocus(mainWindow);return 0;
+        }
         if(id>=ACTION_START&&id<ACTION_START+6&&code==BN_CLICKED){trigger(id-ACTION_START);return 0;}
-        if(id==LIST_ID&&code==LBN_SELCHANGE){lastListIndex=int(SendMessageW(listControl,LB_GETCURSEL,0,0));detailForSelected();return 0;}
+        if(id==LIST_ID&&code==LBN_SELCHANGE){lastListIndex=int(SendMessageW(listControl,LB_GETCURSEL,0,0));detailForSelected();if(page==6)updateTransferOfferInput();return 0;}
+        if(page==6&&(id==SEARCH_APPLY||id==SEARCH_RESET)&&code==BN_CLICKED){
+            const int preservedId=selectedId();
+            const std::wstring draft=getText(inputControl);
+            if(id==SEARCH_RESET)resetPlayerSearch();
+            else if(!readPlayerSearch())return 0;
+            showPage(6);
+            if(selectedId()==preservedId)SetWindowTextW(inputControl,draft.c_str());
+            tell(id==SEARCH_RESET?"Фильтры сброшены. Показаны все доступные кандидаты.":"Поиск обновлён. Поле предложения находится внизу.");
+            return 0;
+        }
         if(id==SETUP_CLUB&&code==CBN_SELCHANGE){InvalidateRect(clubLogoWindow,nullptr,TRUE);return 0;}
-        if(id==SETUP_ROLE&&code==CBN_SELCHANGE){updateSetupHelp();return 0;}
         if(id==SETUP_START&&code==BN_CLICKED){startCareer();return 0;}
         if(id==SETUP_LOAD&&code==BN_CLICKED){
             std::string result=game().load(saveFile);
             if(result.find("загружена")!=std::string::npos){
+                resetPlayback();resetPlayerSearch();
                 started=true;show(setupName,false);show(setupClub,false);show(setupRole,false);show(setupDifficulty,false);
                 show(setupLeagues,false);show(setupHelp,false);show(setupStart,false);show(setupLoad,false);
                 show(mainText,true);show(clubLogoWindow,true);showPage(0);
@@ -1021,12 +1149,7 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     }
     case WM_DRAWITEM:{auto* dis=reinterpret_cast<DRAWITEMSTRUCT*>(l);if(dis->CtlType==ODT_BUTTON){drawButton(dis);return TRUE;}break;}
     case WM_CTLCOLORSTATIC:{
-        HDC dc=HDC(w);
-        SetTextColor(dc,white);
-        SetBkColor(dc,background);
-        // Opaque backing is essential: transparent STATIC labels kept
-        // fragments of previous titles/status text after page changes.
-        SetBkMode(dc,OPAQUE);
+        HDC dc=HDC(w);SetTextColor(dc,white);SetBkColor(dc,background);SetBkMode(dc,OPAQUE);
         return LRESULT(backgroundBrush);
     }
     case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:{
@@ -1034,7 +1157,7 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     }
     case WM_ERASEBKGND:{
         RECT rect;GetClientRect(hwnd,&rect);FillRect(HDC(w),&rect,backgroundBrush);
-        RECT sidebar={0,0,205,rect.bottom};HBRUSH brush=CreateSolidBrush(RGB(10,17,29));FillRect(HDC(w),&sidebar,brush);DeleteObject(brush);return 1;
+        RECT sidebar={0,0,std::clamp(int(rect.right)/5,165,215),rect.bottom};HBRUSH brush=CreateSolidBrush(RGB(10,17,29));FillRect(HDC(w),&sidebar,brush);DeleteObject(brush);return 1;
     }
     case WM_CLOSE:DestroyWindow(hwnd);return 0;
     case WM_DESTROY:KillTimer(hwnd,PITCH_TIMER);PostQuitMessage(0);return 0;
@@ -1061,7 +1184,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int showCommand){
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"FootballUniverseDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     wc.hbrBackground=backgroundBrush;RegisterClassExW(&wc);
-    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.11 — анимированный футбольный менеджер",
+    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.14.1 — живая футбольная вселенная",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,840,nullptr,nullptr,instance,nullptr);
     if(!window){MessageBoxW(nullptr,L"Не удалось создать окно",L"Ошибка",MB_ICONERROR);return 1;}
     trace("window CREATED");ShowWindow(window,showCommand);trace("window SHOWN");UpdateWindow(window);trace("window UPDATED");
