@@ -1,0 +1,151 @@
+{
+  "snapshot_date": "2026-06-11",
+  "source": "Eric San Miguel football_elo data/squads/2026.csv (2026 World Cup player and club records)",
+  "source_url": "https://github.com/ericsanmiguel/football_elo/blob/main/data/squads/2026.csv",
+  "source_license": "MIT (repository; copyright Eric San Miguel, 2026)",
+  "player_count": 280,
+  "clubs_with_players": 35,
+  "club_counts": [
+    {
+      "club_id": 0,
+      "count": 16
+    },
+    {
+      "club_id": 1,
+      "count": 11
+    },
+    {
+      "club_id": 2,
+      "count": 19
+    },
+    {
+      "club_id": 3,
+      "count": 8
+    },
+    {
+      "club_id": 4,
+      "count": 11
+    },
+    {
+      "club_id": 5,
+      "count": 8
+    },
+    {
+      "club_id": 6,
+      "count": 10
+    },
+    {
+      "club_id": 7,
+      "count": 14
+    },
+    {
+      "club_id": 8,
+      "count": 12
+    },
+    {
+      "club_id": 9,
+      "count": 4
+    },
+    {
+      "club_id": 10,
+      "count": 8
+    },
+    {
+      "club_id": 11,
+      "count": 5
+    },
+    {
+      "club_id": 12,
+      "count": 17
+    },
+    {
+      "club_id": 13,
+      "count": 11
+    },
+    {
+      "club_id": 14,
+      "count": 7
+    },
+    {
+      "club_id": 15,
+      "count": 6
+    },
+    {
+      "club_id": 16,
+      "count": 8
+    },
+    {
+      "club_id": 17,
+      "count": 8
+    },
+    {
+      "club_id": 18,
+      "count": 7
+    },
+    {
+      "club_id": 19,
+      "count": 10
+    },
+    {
+      "club_id": 20,
+      "count": 6
+    },
+    {
+      "club_id": 21,
+      "count": 4
+    },
+    {
+      "club_id": 22,
+      "count": 6
+    },
+    {
+      "club_id": 23,
+      "count": 7
+    },
+    {
+      "club_id": 24,
+      "count": 15
+    },
+    {
+      "club_id": 25,
+      "count": 7
+    },
+    {
+      "club_id": 26,
+      "count": 6
+    },
+    {
+      "club_id": 27,
+      "count": 8
+    },
+    {
+      "club_id": 28,
+      "count": 5
+    },
+    {
+      "club_id": 29,
+      "count": 8
+    },
+    {
+      "club_id": 30,
+      "count": 2
+    },
+    {
+      "club_id": 31,
+      "count": 1
+    },
+    {
+      "club_id": 33,
+      "count": 2
+    },
+    {
+      "club_id": 34,
+      "count": 1
+    },
+    {
+      "club_id": 35,
+      "count": 2
+    }
+  ],
+  "notes": "Real names/DOB/positions and club affiliations as recorded at World Cup 2026; transfers since summer 2026 not guaranteed. All game ability/potential/wages/values are generated locally. Source market values were NOT imported. The Wikidata/Wikipedia refresh workflow may later replace this snapshot."
+}
