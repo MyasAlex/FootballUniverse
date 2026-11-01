@@ -67,7 +67,7 @@ function Check-Layout([IntPtr]$hwnd, [int]$page, [string]$size) {
     for($j=$i+1;$j -lt $visible.Count;$j++){
       $area=Intersect-Area $visible[$i].rect $visible[$j].rect
       if($area -gt 2){
-        throw "Overlap page $page at $size: $($visible[$i].name) vs $($visible[$j].name), area $area"
+        throw "Overlap page $page at ${size}: $($visible[$i].name) vs $($visible[$j].name), area $area"
       }
     }
   }
