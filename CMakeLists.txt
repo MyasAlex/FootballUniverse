@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FootballUniverse VERSION 0.11.0 LANGUAGES CXX)
+project(FootballUniverse VERSION 0.12.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Link the MSVC runtime statically so players do not need Visual C++ installed.
@@ -77,3 +77,8 @@ add_executable(fu_pitch_scene_tests tests/test_pitch_scene.cpp)
 target_link_libraries(fu_pitch_scene_tests PRIVATE fu_core)
 add_test(NAME animated_pitch_determinism COMMAND fu_pitch_scene_tests)
 set_tests_properties(animated_pitch_determinism PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+add_executable(fu_real_roster_tests tests/test_real_rosters.cpp)
+target_link_libraries(fu_real_roster_tests PRIVATE fu_core)
+add_test(NAME real_wikidata_rosters_and_save COMMAND fu_real_roster_tests)
+set_tests_properties(real_wikidata_rosters_and_save PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
