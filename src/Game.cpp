@@ -208,7 +208,7 @@ void Game::autoAssignCaptains(){
     }
 }
 std::string Game::setCaptain(int playerId,bool vice){
-    if(!permissionSports())return status_="Нет полномочий назначать капитана.";
+    if(!permissionCoaching())return status_="Нет полномочий назначать капитана.";
     if(hasLiveMatch())return status_="Во время матча назначение капитана недоступно.";
     Player* chosen=nullptr;
     for(auto& p:players_)if(p.id==playerId&&p.club==teamId_)chosen=&p;
@@ -249,13 +249,13 @@ void Game::pickLineup(int clubId){
     }
 }
 std::string Game::autoPickLineup(){
-    if(!permissionSports())return status_="Нет полномочий управлять составом.";
+    if(!permissionCoaching())return status_="Нет полномочий управлять составом.";
     if(hasLiveMatch())return status_="В ходе матча стартовый состав нельзя менять; используйте замену.";
     pickLineup(teamId_);
     return status_="Автоматически выбраны лучшие доступные 11 игроков по позициям.";
 }
 std::string Game::swapStarter(int substituteId,int starterId){
-    if(!permissionSports())return status_="Нет полномочий выбирать состав.";
+    if(!permissionCoaching())return status_="Нет полномочий выбирать состав.";
     if(hasLiveMatch())return status_="Изменять стартовый состав во время матча нельзя.";
     Player* in=nullptr;Player* out=nullptr;
     for(auto& p:players_){if(p.id==substituteId)in=&p;if(p.id==starterId)out=&p;}
@@ -291,7 +291,7 @@ std::string Game::lineupText()const{
     return o.str();
 }
 std::string Game::cycleTrainingFocus(int playerId){
-    if(!permissionSports())return status_="Нет полномочий назначать тренировки.";
+    if(!permissionCoaching())return status_="Нет полномочий назначать тренировки.";
     if(hasLiveMatch())return status_="Во время матча менять тренировку нельзя.";
     for(auto& p:players_)if(p.id==playerId&&p.club==teamId_){
         p.trainingFocus=(p.trainingFocus+2)%11-1; // -1 -> 0 -> 1 ... -> 9 -> -1
@@ -471,7 +471,7 @@ int Game::lineupStrength(const std::vector<int>& ids)const{
     return clamp(total/n-(11-n)*4+leadership+teamwork,5,99);
 }
 std::string Game::substitute(int playerOutId,int playerInId){
-    if(!permissionSports())return status_="Нет полномочий проводить замены.";
+    if(!permissionCoaching())return status_="Нет полномочий проводить замены.";
     if(!hasLiveMatch())return status_="Замены доступны только во время интерактивного матча.";
     const auto& m=matches_.at(live_.id);
     std::vector<int>& eleven=(m.home==teamId_?live_.homeXI:live_.awayXI);
@@ -678,7 +678,7 @@ void Game::pruneRelationships(){
     }
 }
 std::string Game::assignMentor(int youngId,int mentorId){
-    if(!permissionSports())return status_="Нет полномочий назначать наставников.";
+    if(!permissionCoaching())return status_="Нет полномочий назначать наставников.";
     if(hasLiveMatch())return status_="Во время матча менять наставника нельзя.";
     Player* young=nullptr;const Player* experienced=findPlayer(mentorId);
     for(auto& p:players_)if(p.id==youngId)young=&p;
@@ -697,7 +697,7 @@ std::string Game::assignMentor(int youngId,int mentorId){
     return status_;
 }
 std::string Game::improveRelationship(int firstId,int secondId,int type){
-    if(!permissionSports())return status_="Нет полномочий проводить встречи игроков.";
+    if(!permissionCoaching())return status_="Нет полномочий проводить встречи игроков.";
     if(hasLiveMatch())return status_="Завершите матч перед встречей.";
     if(type<0||type>2)return status_="Тип встречи 0–2.";
     const Player* a=findPlayer(firstId),*b=findPlayer(secondId);
@@ -1385,7 +1385,7 @@ std::string Game::homeText()const{
     o<<"КЛУБ: "<<myClub().name<<"\n";
     o<<"Менеджер: "<<manager_<<" | репутация "<<reputation_<<"/100\n";
     o<<"Дивизион: "<<leagues_[myClub().league].name<<" ("<<leagues_[myClub().league].country<<")\n";
-    o<<"Роль: "<<(role_==Role::Coach?"Главный тренер":role_==Role::Director?"Спортивный директор":role_==Role::Owner?"Владелец":role_==Role::President?"Президент":"Песочница")<<"\n";
+    o<<"Роль: "<<(role_==Role::Coach?"Главный тренер":role_==Role::Director?"Спортивный директор":role_==Role::Owner?"Владелец":role_==Role::President?"Президент":"Песочница")<<"\n";    o<<"\n"<<roleOverview()<<"\n";
     o<<"Сложность: "<<(difficulty_==Difficulty::Easy?"Лёгкая":difficulty_==Difficulty::Realistic?"Реализм":difficulty_==Difficulty::Hard?"Сложная":"Свободная песочница")<<"\n\n";
     o<<"Бюджет: "<<money(myClub().budget)<<"\n";
     int liveDeals=0;for(const auto& d:deals_)if(int(d.stage)<=4)++liveDeals;
@@ -1515,7 +1515,7 @@ std::string Game::helpText()const{
     "Проект не связан с Sports Interactive или Football Manager.\n";
 }
 std::string Game::teamTalk(int tone){
-    if(!permissionSports())return status_="Нет полномочий проводить командные собрания.";
+    if(!permissionCoaching())return status_="Нет полномочий проводить командные собрания.";
     if(hasLiveMatch())return status_="Собрание доступно вне матча.";
     if(tone<0||tone>2)return status_="Неизвестный тип собрания.";
     if(totalDays_-lastTeamTalkDay_<7)
@@ -2209,41 +2209,75 @@ std::string Game::matchArchive()const{
     return o.str();
 }
 void Game::changePressing(){
-    if(!permissionSports()){status_="Нет полномочий менять прессинг.";return;}
+    if(!permissionCoaching()){status_="Нет полномочий менять прессинг.";return;}
     myClub().pressing=(myClub().pressing+1)%3;
     status_="Прессинг изменён.";
 }
 void Game::changeTempo(){
-    if(!permissionSports()){status_="Нет полномочий менять темп.";return;}
+    if(!permissionCoaching()){status_="Нет полномочий менять темп.";return;}
     myClub().tempo=(myClub().tempo+1)%3;
     status_="Темп изменён.";
 }
 void Game::changeWidth(){
-    if(!permissionSports()){status_="Нет полномочий менять ширину.";return;}
+    if(!permissionCoaching()){status_="Нет полномочий менять ширину.";return;}
     myClub().width=(myClub().width+1)%3;
     status_="Ширина игры изменена.";
 }
 void Game::changeTactic(){
-    if(!permissionSports()){status_="Должность не позволяет менять тактику при этой сложности.";return;}
+    if(!permissionCoaching()){status_="Должность не позволяет менять тактику при этой сложности.";return;}
     myClub().tactic=(myClub().tactic+1)%int(tactics.size());
     status_="Выбрано: "+tactics[myClub().tactic];
 }
 void Game::changeFormation(){
-    if(!permissionSports()){status_="Нет полномочий на изменение схемы.";return;}
+    if(!permissionCoaching()){status_="Нет полномочий на изменение схемы.";return;}
     myClub().formation=(myClub().formation+1)%int(formations.size());
     if(!hasLiveMatch())pickLineup(teamId_);
     status_="Схема: "+formations[myClub().formation];
 }
 void Game::changeTraining(){
-    if(!permissionSports()){status_="Нет полномочий управлять тренировками.";return;}
+    if(!permissionCoaching()){status_="Нет полномочий управлять тренировками.";return;}
     myClub().training=(myClub().training+1)%int(trainings.size());
     status_="Новый план тренировок: "+trainings[myClub().training];
 }
 bool Game::permissionSports()const{
-    return difficulty_==Difficulty::Free||role_==Role::Coach||role_==Role::Sandbox||role_==Role::Director;
+    return canTransfer();
+}
+bool Game::permissionCoaching()const{
+    return canCoach();
 }
 bool Game::permissionBusiness()const{
-    return difficulty_==Difficulty::Free||difficulty_==Difficulty::Easy||role_==Role::Owner||role_==Role::President||role_==Role::Sandbox;
+    return canInvest()||canCommercial();
+}
+std::string Game::roleOverview()const{
+    switch(role_){
+    case Role::Coach:
+        return "ГЛАВНЫЙ ТРЕНЕР\n"
+               "ВАША РАБОТА: состав, схема, тактика, замены, тренировки, разговоры с игроками.\n"
+               "ДОПОЛНИТЕЛЬНО: можете предлагать трансферы и просматривать скаутские отчёты.\n"
+               "НЕЛЬЗЯ: утверждать стадионные инвестиции, менять цены на билеты и спонсоров.\n"
+               "ЦЕЛЬ: результаты матчей, развитие игроков и карьера тренера.\n";
+    case Role::Director:
+        return "СПОРТИВНЫЙ ДИРЕКТОР\n"
+               "ВАША РАБОТА: покупки, продажи, аренды, контракты, поиск игроков, академия и персонал.\n"
+               "НЕЛЬЗЯ: выбирать стартовый состав, менять тактику, тренировки и делать замены.\n"
+               "Матчи можно смотреть или симулировать, но решения на поле принимает тренер.\n";
+    case Role::Owner:
+        return "ВЛАДЕЛЕЦ КЛУБА\n"
+               "ВАША РАБОТА: вложения в стадион, тренировочную базу и академию, крупные расходы.\n"
+               "НЕЛЬЗЯ: руководить составом, вести трансферы, менять тактику, устанавливать билеты.\n"
+               "Матчи доступны для просмотра, а повседневной работой занимается руководство.\n";
+    case Role::President:
+        return "ПРЕЗИДЕНТ КЛУБА\n"
+               "ВАША РАБОТА: спонсоры, цены на билеты, отношения с болельщиками, персонал.\n"
+               "НЕЛЬЗЯ: тренировать состав, оформлять трансферы и утверждать инвестиции владельца.\n"
+               "ЦЕЛЬ: доходы, популярность клуба и стабильность управления.\n";
+    case Role::Sandbox:
+        return "ПЕСОЧНИЦА / ВСЕ ПОЛНОМОЧИЯ\n"
+               "Можете управлять составом и тактикой, вести трансферы и контракты,\n"
+               "инвестировать в инфраструктуру, искать спонсоров, менять билеты.\n"
+               "Это единственный режим, где ограничения по полномочиям отключены.\n";
+    }
+    return "";
 }
 bool Game::canFinance(int amount){
     if(difficulty_==Difficulty::Free)return true;
@@ -2705,6 +2739,7 @@ bool anyWords(const std::string&s, std::initializer_list<std::string_view> words
 }
 }
 std::string Game::talk(int playerId,const std::string& phrase){
+    if(!permissionCoaching())return status_="Только главный тренер управляет индивидуальными разговорами с футболистами.";
     Player* p=nullptr;for(auto& v:players_)if(v.id==playerId)p=&v;
     if(!p||p->club!=teamId_){status_="Для разговора выберите футболиста клуба.";return status_;}
     if(phrase.empty()){status_="Введите своё сообщение футболисту.";return status_;}
@@ -2757,7 +2792,7 @@ std::string Game::speakToFans(const std::string& phrase){
     return status_;
 }
 std::string Game::spendMoney(const std::string& project){
-    if(!permissionBusiness()){status_="Это решение должен утверждать владелец или президент.";return status_;}
+    if(!canInvest()){status_="Инфраструктуру и крупные вложения утверждает владелец клуба.";return status_;}
     int cost=0;
     if(project=="stadium"){cost=3000000;if(myClub().stadium>140000){status_="Максимальная вместимость достигнута.";return status_;}}
     if(project=="training"){cost=2000000;if(myClub().facilities>=10){status_="База полностью модернизирована.";return status_;}}
@@ -2782,7 +2817,7 @@ std::string Game::recruitYouth(){
     return signYouthProspect(bestId);
 }
 std::string Game::negotiateSponsor(){
-    if(!permissionBusiness()){status_="Спонсорские переговоры доступны руководству.";return status_;}
+    if(!canCommercial()){status_="Спонсорскими договорами занимается президент клуба.";return status_;}
     int roll=random(1,100);
     if(roll<40){status_="Новый спонсор отказал, переговоры не дали результата.";}
     else{int bonus=25000+random(0,myClub().prestige*4000);myClub().sponsorship+=bonus;
@@ -2791,7 +2826,7 @@ std::string Game::negotiateSponsor(){
     return status_;
 }
 std::string Game::adjustTickets(int change){
-    if(!permissionBusiness()){status_="Цены на билеты утверждает руководство.";return status_;}
+    if(!canCommercial()){status_="Цены на билеты определяет президент клуба.";return status_;}
     myClub().ticket=std::clamp(myClub().ticket+change,5,250);
     myClub().fans=clamp(myClub().fans+(change<0?2:-2));
     status_="Цена билета: "+std::to_string(myClub().ticket)+" €. Отношение болельщиков изменилось.";
