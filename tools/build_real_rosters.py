@@ -39,10 +39,19 @@ API = "https://en.wikipedia.org/w/api.php"
 SPARQL = "https://query.wikidata.org/sparql"
 
 
-def fetch_json(url, params, timeout=55, tries=3):
+_last_web_request = 0.0
+def fetch_json(url, params, timeout=55, tries=5):
+    global _last_web_request
     query = urllib.parse.urlencode(params)
     last_error = None
     for attempt in range(tries):
+        # Wikimedia requests share an IP quota on cloud runner machines. Keep
+        # queries below 20 per minute and honour explicit rate limits.
+        now = time.monotonic()
+        pause = max(0.0, 3.5 - (now - _last_web_request))
+        if pause:
+            time.sleep(pause)
+        _last_web_request = time.monotonic()
         try:
             request = urllib.request.Request(url + "?" + query, headers={
                 "User-Agent": AGENT,
@@ -50,13 +59,21 @@ def fetch_json(url, params, timeout=55, tries=3):
             })
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return json.load(response)
+        except urllib.error.HTTPError as exc:
+            last_error = exc
+            if exc.code == 429:
+                delay = 20 + 10 * attempt
+                print(f"Wikimedia HTTP 429: cooling down {delay}s",
+                      file=sys.stderr, flush=True)
+                time.sleep(delay)
+            elif exc.code in (500, 502, 503, 504):
+                time.sleep(5 + 6*attempt)
+            else:
+                raise
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
             last_error = exc
-            print("HTTP retry", attempt + 1, type(exc).__name__, str(exc)[:150],
-                  file=sys.stderr, flush=True)
-            time.sleep(2 + attempt * 3)
+            time.sleep(5 + 5*attempt)
     raise RuntimeError(f"Data source failed: {url}: {last_error}")
-
 
 def club_qids():
     # Wikipedia pageprops exposes Wikidata identities, 36 titles in one request.
@@ -245,7 +262,6 @@ def wikidata_for_titles(titles):
             canonical = redirect.get(canonical, canonical)
             if page_map.get(canonical):
                 qids[title] = page_map[canonical]
-        time.sleep(.2)
     return qids
 
 
@@ -269,7 +285,6 @@ def wikidata_birthdates(qids):
                 if date:
                     dates[qid] = date
                     break
-        time.sleep(.2)
     return dates
 
 
@@ -296,7 +311,6 @@ def generate(probe=False):
             entries = []
         all_rosters[cid] = entries
         print(f"Club #{cid}: {title} — {len(entries)} roster names", flush=True)
-        time.sleep(.2)
     if probe:
         print("EXAMPLE", json.dumps(all_rosters.get(0, [])[:12], ensure_ascii=False))
         return
