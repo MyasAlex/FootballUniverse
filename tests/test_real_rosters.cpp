@@ -23,6 +23,7 @@ int main(){
             <<"0;Q10002;Sample Real Defender;DC;2000-06-15\n"
             <<"0;Q10003;Sample Real Forward;ST;2003-08-07\n"
             <<"1;Q10004;Sample Other Club Player;MC;2001-04-09\n"
+            <<"2;WC:342229;Sample World Cup Player;ST;1998-12-20\n"
             <<"1;Q10004;Duplicate Identical Person;MC;2001-04-09\n"
             <<"1;Qxyz;Invalid Identity;MC;2001-04-09\n"
             <<"2;Q10005;Invalid Birthday;GK;2050-01-01\n"
@@ -30,10 +31,10 @@ int main(){
     }
     assert(game.importPlayers(path));
     assert(game.players().size()==size_t(oldCount));
-    assert(game.realPlayerCount()==4);
+    assert(game.realPlayerCount()==5);
     assert(game.realPlayerCount(0)==3);
     assert(game.realPlayerCount(1)==1);
-    assert(game.realPlayerCount(2)==0);
+    assert(game.realPlayerCount(2)==1);
     assert(game.ownPlayers().size()==24);
     assert(game.findPlayer(firstId)!=nullptr);
     const fu::Player* keeper=nullptr;
@@ -49,8 +50,10 @@ int main(){
     assert(game.save(save).find("сохранена")!=std::string::npos);
     fu::Game restored;
     assert(restored.load(save).find("загружена")!=std::string::npos);
-    assert(restored.realPlayerCount()==4);
+    assert(restored.realPlayerCount()==5);
     assert(restored.findPlayer(keeper->id)->sourceQid=="Q10001");
+    assert(std::any_of(restored.players().begin(),restored.players().end(),
+        [](const fu::Player& p){return p.club==2&&p.sourceQid=="WC:342229";}));
     assert(restored.players().size()==game.players().size());
     assert(restored.ownPlayers().size()==24);
     restored.advance(1);
