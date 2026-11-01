@@ -3363,8 +3363,8 @@ int Game::realPlayerCount(int clubId)const{
     return count;
 }
 bool Game::importPlayers(const std::string& path){
-    if(hasLiveMatch()||totalDays_>0){
-        status_="Импорт базы доступен только в начале новой карьеры, до первого игрового дня.";
+    if(hasLiveMatch()){
+        status_="Невозможно импортировать во время матча.";
         return false;
     }
     std::ifstream file(path,std::ios::binary);
@@ -3376,6 +3376,10 @@ bool Game::importPlayers(const std::string& path){
        static_cast<unsigned char>(line[2])==0xBF)line.erase(0,3);
     const bool realFormat=line.find("wikidata_qid")!=std::string::npos&&
                           line.find("birth_date")!=std::string::npos;
+    if(realFormat&&totalDays_>0){
+        status_="Реальная база меняет стартовые составы: импортируйте в новой карьере до первого игрового дня.";
+        return false;
+    }
     int imported=0;
     if(realFormat){
         std::unordered_set<std::string> seenQids;
