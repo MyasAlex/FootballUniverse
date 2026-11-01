@@ -188,6 +188,11 @@ public:
     int season() const { return season_; }
     int totalDays() const { return totalDays_; }
     Role role() const { return role_; }
+    bool canCoach() const { return role_==Role::Coach || role_==Role::Sandbox; }
+    bool canTransfer() const { return role_==Role::Coach || role_==Role::Director || role_==Role::Sandbox; }
+    bool canInvest() const { return role_==Role::Owner || role_==Role::Sandbox; }
+    bool canCommercial() const { return role_==Role::President || role_==Role::Sandbox; }
+    std::string roleOverview() const;
     Difficulty difficulty() const { return difficulty_; }
     const std::string& manager() const { return manager_; }
     const std::string& status() const { return status_; }
@@ -316,6 +321,7 @@ private:
     void simulateFast(Match& match);
     bool canFinance(int amount);
     bool permissionSports() const;
+    bool permissionCoaching() const;
     bool permissionBusiness() const;
     void addMessage(std::string title, std::string body);
 };
