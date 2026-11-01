@@ -21,7 +21,7 @@ struct Player {
     int careerAppearances=0;
     int developmentXP=0, mentorId=-1, developedSkills=0;
     bool academyGraduate=false;
-    std::string sourceQid; // Empty for generated players; Q... for real Wikidata identities.
+    std::string sourceQid; // Real source identity: Wikidata Q... or WC:2026 player ID; empty if generated.
 };
 struct Club {
     int id=0, league=0;
