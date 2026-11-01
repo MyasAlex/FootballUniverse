@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FootballUniverse VERSION 0.12.0 LANGUAGES CXX)
+project(FootballUniverse VERSION 0.12.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Link the MSVC runtime statically so players do not need Visual C++ installed.
@@ -87,3 +87,12 @@ add_executable(fu_real_database_tests tests/test_real_database.cpp)
 target_link_libraries(fu_real_database_tests PRIVATE fu_core)
 add_test(NAME bundled_real_player_values COMMAND fu_real_database_tests)
 set_tests_properties(bundled_real_player_values PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+
+add_executable(fu_role_powers_tests tests/test_role_powers.cpp)
+target_link_libraries(fu_role_powers_tests PRIVATE fu_core)
+add_test(NAME five_career_roles_are_distinct COMMAND fu_role_powers_tests)
+set_tests_properties(five_career_roles_are_distinct PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+add_executable(fu_pitch_motion_tests tests/test_pitch_motion.cpp)
+target_link_libraries(fu_pitch_motion_tests PRIVATE fu_core)
+add_test(NAME no_abrupt_player_teleportation COMMAND fu_pitch_motion_tests)
