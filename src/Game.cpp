@@ -1366,7 +1366,7 @@ std::string Game::squadText()const{
     o<<"Количество футболистов: "<<ownPlayers().size()<<"\n";
     o<<"Из реальной базы: "<<realPlayerCount(teamId_)
      <<" | сгенерированных: "<<ownPlayers().size()-realPlayerCount(teamId_)<<"\n";
-    o<<"Имена и даты рождения из Wikidata; игровые оценки рассчитаны движком.\n";
+    o<<"Имена и даты рождения из открытых источников; навыки рассчитаны движком.\n";
     o<<"Основа: "<<starters(teamId_).size()<<"/11\n";
     if(const Player* p=findPlayer(myClub().captainId))o<<"Капитан: "<<p->name<<"\n";
     if(const Player* p=findPlayer(myClub().viceCaptainId))o<<"Вице-капитан: "<<p->name<<"\n";
@@ -3012,12 +3012,22 @@ std::string Game::load(const std::string& path){
             if(!getString(f,p.name)||!getString(f,p.position)||!getString(f,p.personality))
                 throw std::runtime_error("Данные игрока");
             if(version12){
-                if(!getString(f,p.sourceQid)||p.sourceQid.size()>16||
-                   (!p.sourceQid.empty()&&
-                    (p.sourceQid[0]!='Q'||
-                     !std::all_of(p.sourceQid.begin()+1,p.sourceQid.end(),
-                                  [](unsigned char c){return c>='0'&&c<='9';}))))
+                if(!getString(f,p.sourceQid)||p.sourceQid.size()>24)
                     throw std::runtime_error("Источник личности футболиста");
+                if(!p.sourceQid.empty()){
+                    auto digits=[](std::string::const_iterator a,
+                                   std::string::const_iterator b){
+                        return a!=b&&std::all_of(a,b,[](unsigned char c){
+                            return c>='0'&&c<='9';
+                        });
+                    };
+                    const bool wiki=p.sourceQid[0]=='Q'&&
+                        digits(p.sourceQid.begin()+1,p.sourceQid.end());
+                    const bool world=p.sourceQid.rfind("WC:",0)==0&&
+                        digits(p.sourceQid.begin()+3,p.sourceQid.end());
+                    if(!wiki&&!world)
+                        throw std::runtime_error("Некорректный ID источника игрока");
+                }
             }
             loaded.players_.push_back(std::move(p));
         }
@@ -3374,7 +3384,8 @@ bool Game::importPlayers(const std::string& path){
     if(line.size()>=3&&static_cast<unsigned char>(line[0])==0xEF&&
        static_cast<unsigned char>(line[1])==0xBB&&
        static_cast<unsigned char>(line[2])==0xBF)line.erase(0,3);
-    const bool realFormat=line.find("wikidata_qid")!=std::string::npos&&
+    const bool realFormat=(line.find("wikidata_qid")!=std::string::npos||
+                           line.find("source_id")!=std::string::npos)&&
                           line.find("birth_date")!=std::string::npos;
     if(realFormat&&totalDays_>0){
         status_="Реальная база меняет стартовые составы: импортируйте в новой карьере до первого игрового дня.";
@@ -3405,10 +3416,18 @@ bool Game::importPlayers(const std::string& path){
                 const std::string& name=fields[2];
                 const std::string& pos=fields[3];
                 const std::string& dob=fields[4];
-                if(qid.size()<2||qid[0]!='Q'||qid.size()>16||
-                   !std::all_of(qid.begin()+1,qid.end(),[](unsigned char c){
-                       return c>='0'&&c<='9';
-                   })||name.size()<3||name.size()>120||
+                auto onlyDigits=[](std::string::const_iterator a,
+                                   std::string::const_iterator b){
+                    return a!=b&&std::all_of(a,b,[](unsigned char c){
+                        return c>='0'&&c<='9';
+                    });
+                };
+                const bool wikidata=qid.size()>1&&qid[0]=='Q'&&
+                    onlyDigits(qid.begin()+1,qid.end());
+                const bool worldCup=qid.size()>3&&qid.rfind("WC:",0)==0&&
+                    onlyDigits(qid.begin()+3,qid.end());
+                if(qid.size()>24||(!wikidata&&!worldCup)||
+                   name.size()<3||name.size()>120||
                    name.find('\r')!=std::string::npos||
                    !seenQids.insert(qid).second)
                     continue;
@@ -3476,7 +3495,7 @@ bool Game::importPlayers(const std::string& path){
         autoAssignCaptains();
         for(const auto& club:clubs_)pickLineup(club.id);
         status_="Импортировано настоящих футболистов: "+std::to_string(imported)+
-                " (Wikidata), остальные игроки — сгенерированы.";
+                ". Остальные места заняты сгенерированными игроками.";
         if(!realFormat)
             status_="Импортировано футболистов из пользовательского CSV: "+
                     std::to_string(imported);
