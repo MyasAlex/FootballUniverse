@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FootballUniverse VERSION 0.14.1 LANGUAGES CXX)
+project(FootballUniverse VERSION 0.14.2 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Link the MSVC runtime statically so players do not need Visual C++ installed.
@@ -115,3 +115,8 @@ add_executable(fu_match_continuity_tests tests/test_match_continuity.cpp)
 target_link_libraries(fu_match_continuity_tests PRIVATE fu_core)
 add_test(NAME continuous_live_match_and_save COMMAND fu_match_continuity_tests)
 set_tests_properties(continuous_live_match_and_save PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+add_executable(fu_match_ai_advice_tests tests/test_match_ai_advice.cpp)
+target_link_libraries(fu_match_ai_advice_tests PRIVATE fu_core)
+add_test(NAME adaptive_coaches_and_live_advice COMMAND fu_match_ai_advice_tests)
+set_tests_properties(adaptive_coaches_and_live_advice PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")

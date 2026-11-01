@@ -226,6 +226,8 @@ public:
     std::string tacticsText() const;
     std::string financesText() const;
     std::string matchText() const;
+    std::string liveMatchAdviceText() const;
+    std::string applyLiveMatchAdvice();
     std::string matchArchive() const;
     std::string matchReport(int matchId) const;
     std::string latestMatchReport() const;

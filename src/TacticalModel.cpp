@@ -51,6 +51,50 @@ TacticalEffect evaluateTactics(const Club& own,const Club& opponent,int averageF
     return effect;
 }
 
+TacticalRecommendation adviseLiveTactics(const MatchSituation& situation){
+    const int minute=std::clamp(situation.minute,0,90);
+    const int fitness=std::clamp(situation.averageFitness,0,100);
+    const int possession=std::clamp(situation.possessionPercent,0,100);
+    if(minute>=70&&situation.goalDifference>0)
+        return {TacticalPlan::ProtectLead,
+            "Мы ведём в концовке: снизить темп, закрыть зоны и сохранить преимущество."};
+    if(minute>=55&&situation.goalDifference<0){
+        if(fitness>=76)
+            return {TacticalPlan::Gegenpress,
+                "Мы уступаем: свежая команда может усилить прессинг и увеличить число атак."};
+        return {TacticalPlan::Counter,
+            "Мы уступаем, но команда устала: быстрые контратаки без изнуряющего прессинга."};
+    }
+    if(minute>=35&&situation.shotsFor<=1&&situation.xgFor<=20){
+        if(possession<42)return {TacticalPlan::Counter,
+            "Мало владения и моментов: отойдём ниже и попробуем выходить в быстрые атаки."};
+        return {TacticalPlan::Possession,
+            "Мяч у нас, но моментов мало: улучшить точность и движение через центр."};
+    }
+    if(minute>=35&&situation.xgAgainst>situation.xgFor+100&&fitness<75)
+        return {TacticalPlan::Counter,
+            "Соперник создаёт опаснее, а запас сил ограничен: снизить риск при обороне."};
+    if(minute>=35&&possession<38&&fitness>=82)
+        return {TacticalPlan::Gegenpress,
+            "Соперник контролирует мяч: свежие игроки могут навязать более высокий прессинг."};
+    return {TacticalPlan::Balanced,
+        "По текущим показателям резкая перестройка не нужна: сохраняем баланс."};
+}
+
+Club adaptiveAITactics(const Club& base,int minute,int goalDifference,int averageFitness){
+    Club temporary=base;
+    if(minute>=75&&goalDifference>0){
+        temporary.tactic=0;temporary.pressing=0;temporary.tempo=0;temporary.width=0;
+    }else if(minute>=60&&goalDifference<0){
+        if(averageFitness>=70){
+            temporary.tactic=2;temporary.pressing=2;temporary.tempo=2;temporary.width=2;
+        }else{
+            temporary.tactic=4;temporary.pressing=0;temporary.tempo=2;temporary.width=2;
+        }
+    }
+    return temporary;
+}
+
 int matchFatigueCost(const Club& club,int stamina){
     const bool highPress=club.tactic==3||club.pressing>=2;
     int cost=1+(highPress?1:0)+(club.tempo>=2?1:0);
