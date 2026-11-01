@@ -2,6 +2,7 @@ name: Compile Windows game (no PC compiler required)
 
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [main, master]
 
@@ -47,14 +48,15 @@ jobs:
           start "" "FootballUniverse.exe"
           '@ | Set-Content "$folder/PLAY.bat" -Encoding Ascii
           @'
-          Football Universe 0.12.1 - UI/role/animation fixes (source preview)
+          Football Universe 0.12.2 - UI/role/match continuity fixes (source preview)
           Run PLAY.bat or FootballUniverse.exe.
           C++ and Visual Studio are NOT required to run.
           Save files (career.fus) remain in the game folder if started through PLAY.bat.
-          This is a source-based UI fix preview (v0.12.1), not the user's v0.14 EXE.
-          Do NOT overwrite v0.14 or copy FUSAVE_13 careers here: this build does not read that newer save format.
+          This is built from earlier v0.12.1 repository sources, NOT the full v0.14 EXE.
+          Do NOT replace v0.14. This preview cannot read v0.14 FUSAVE_13 careers.
           Real-player offline dataset includes 280 players and is a June 2026 snapshot.
           Windows GUI startup and panel geometry are checked in CI.
+          Preview saves use FUSAVE_12_FLOW1, incompatible with the full 0.14 game.
           '@ | Set-Content "$folder/READ_FIRST.txt" -Encoding UTF8
           @'
           @echo off
