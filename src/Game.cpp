@@ -1001,11 +1001,17 @@ void Game::newCareer(std::string manager,int clubId,Role role,Difficulty difficu
     for(auto& l:leagues_)l.active=std::find(activeLeagues.begin(),activeLeagues.end(),l.id)!=activeLeagues.end();
     leagues_[clubs_[teamId_].league].active=true;
     createSquads();
+    // Bundled offline real-player snapshot is optional; never require internet to play.
+    // It replaces only procedural identities, while keeping the engine's stable IDs.
+    importPlayers("data/real_players.csv");
     seedStaff();
     seedCoaches();
     generateYouth(teamId_,4+myClub().academy/3);
     autoAssignCaptains();for(const auto& c:clubs_)pickLineup(c.id);createFixtures();createCups();
-    addMessage("Добро пожаловать в клуб","Сезон 2026/27 начался. Режим карьеры: собственная футбольная вселенная. База клубов демонстрационная, составы процедурные. Активные лиги симулируются подробно.");
+    addMessage("Добро пожаловать в клуб","Сезон 2026/27 начался. Футболисты из реальной базы: "+
+               std::to_string(realPlayerCount())+
+               ". Остальные места в клубах заполнены сгенерированными игроками. "+
+               "Вторые дивизионы и расписание остаются условными.");
     addMessage("Первые задачи","Изучите состав, настройте тактику, поговорите с футболистами и подготовьтесь к первому туру. Следующий день — на главной странице.");
     status_="Новая карьера создана";
 }
@@ -1358,6 +1364,9 @@ std::string Game::squadText()const{
     o<<"Игроки и индивидуальные характеристики доступны при выборе в списке.\n\n";
     o<<"Шкала навыков: 0–100. Состояние, мораль, контракты и\nотношения изменяются в ходе карьеры.\n\n";
     o<<"Количество футболистов: "<<ownPlayers().size()<<"\n";
+    o<<"Из реальной базы: "<<realPlayerCount(teamId_)
+     <<" | сгенерированных: "<<ownPlayers().size()-realPlayerCount(teamId_)<<"\n";
+    o<<"Имена и даты рождения из Wikidata; игровые оценки рассчитаны движком.\n";
     o<<"Основа: "<<starters(teamId_).size()<<"/11\n";
     if(const Player* p=findPlayer(myClub().captainId))o<<"Капитан: "<<p->name<<"\n";
     if(const Player* p=findPlayer(myClub().viceCaptainId))o<<"Вице-капитан: "<<p->name<<"\n";
