@@ -559,6 +559,34 @@ void populate(){
         SendMessageW(listControl,LB_SETCURSEL,i,0);
     }
 }
+bool actionAllowed(int screen,int action){
+    const bool coach=game().canCoach(),sport=game().canTransfer();
+    const bool invest=game().canInvest(),commercial=game().canCommercial();
+    switch(screen){
+    case 1:return action==2||action==3||coach;
+    case 2:return action==5||coach;
+    case 3:return action==2||action==3||coach;
+    case 4:return action!=3&&action!=5||coach;
+    case 6:return action==3||sport;
+    case 7:return action==1||sport;
+    case 8:return coach;
+    case 9:return commercial;
+    case 10:return action<=2?invest:commercial;
+    case 11:return (action==3||action==4)?coach:true;
+    case 15:return action>=3||coach;
+    default:return true;
+    }
+}
+std::wstring currentRoleLabel(){
+    switch(game().role()){
+    case fu::Role::Coach:return L"ТРЕНЕР";
+    case fu::Role::Director:return L"СПОРТДИР";
+    case fu::Role::Owner:return L"ВЛАДЕЛЕЦ";
+    case fu::Role::President:return L"ПРЕЗИДЕНТ";
+    case fu::Role::Sandbox:return L"ВСЕ ПРАВА";
+    }
+    return L"";
+}
 void showPage(int next){
     if(!started)return;
     if(next!=4)autoPlayMatch=false;
@@ -573,10 +601,13 @@ void showPage(int next){
     for(int i=0;i<16;++i)show(nav[i],true);
     auto labels=buttonTexts(page);
     for(int i=0;i<5;++i){
-        SetWindowTextW(actions[i],labels[i].c_str());show(actions[i],labels[i]!=L"—");
+        SetWindowTextW(actions[i],labels[i].c_str());
+        show(actions[i],labels[i]!=L"—");
+        EnableWindow(actions[i],actionAllowed(page,i)?TRUE:FALSE);
     }
     show(actions[5],page==1||page==2||page==6||page==8||page==10||page==11||(page==4&&game().hasLiveMatch()));
     SetWindowTextW(actions[5],page==1?L"Вице-капитан":page==6?L"Отменить сделку":page==8?L"Жёсткий разговор":page==11?L"Уволить":page==2?L"Матч":page==4?L"Заменить":L"Билет −5 €");
+    EnableWindow(actions[5],actionAllowed(page,5)?TRUE:FALSE);
     if(page==6)SetWindowTextW(actions[3],shortlistOnly?L"Все игроки":L"Короткий список");
     if(page==4){
         SetWindowTextW(actions[0],game().hasLiveMatch()?L"+15 минут":L"Начать матч");
@@ -584,7 +615,9 @@ void showPage(int next){
         updatePitchFrame();
     }
     SetWindowTextW(titleText,navLabels[page].c_str());
-    std::wstring sub=wide(game().myClub().name)+L"   •   "+wide(game().dateString())+L"   •   Сезон "+std::to_wstring(game().season())+L"/"+std::to_wstring((game().season()+1)%100);
+    std::wstring sub=wide(game().myClub().name)+L"   •   "+wide(game().dateString())+
+        L"   •   "+currentRoleLabel()+L"   •   Сезон "+
+        std::to_wstring(game().season())+L"/"+std::to_wstring((game().season()+1)%100);
     SetWindowTextW(subtitleText,sub.c_str());
     if(page==1)SetWindowTextW(inputControl,L"ID игрока основы");
     if(page==3)SetWindowTextW(inputControl,L"ID наставника");
@@ -862,10 +895,13 @@ void drawButton(const DRAWITEMSTRUCT* dis){
     COLORREF color=navButton?(page==int(dis->CtlID-NAV_START)?RGB(28,65,117):RGB(16,27,45)):
         (primaryButton?primary:RGB(32,52,81));
     if(!navButton&&(dis->itemState&ODS_SELECTED))color=RGB(40,84,132);
+    if(dis->itemState&ODS_DISABLED)color=RGB(27,39,55);
     HBRUSH brush=CreateSolidBrush(color);
     FillRect(dc,&r,brush);DeleteObject(brush);
     wchar_t text[256];GetWindowTextW(dis->hwndItem,text,256);
-    SetBkMode(dc,TRANSPARENT);SetTextColor(dc,white);SelectObject(dc,uiFont);
+    SetBkMode(dc,TRANSPARENT);
+    SetTextColor(dc,(dis->itemState&ODS_DISABLED)?muted:white);
+    SelectObject(dc,uiFont);
     DrawTextW(dc,text,-1,&r,DT_SINGLELINE|DT_CENTER|DT_VCENTER|DT_END_ELLIPSIS);
     // Focus on an old nav button must not look like a second selected page.
     if(!navButton&&(dis->itemState&ODS_FOCUS)){
@@ -938,7 +974,12 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     }
     case WM_COMMAND:{
         int id=LOWORD(w), code=HIWORD(w);
-        if(id>=NAV_START&&id<NAV_START+16&&code==BN_CLICKED){showPage(id-NAV_START);return 0;}
+        if(id>=NAV_START&&id<NAV_START+16&&code==BN_CLICKED){
+        showPage(id-NAV_START);
+        // The previously focused owner-draw button must not remain visually active.
+        SetFocus(mainWindow);
+        return 0;
+    }
         if(id>=ACTION_START&&id<ACTION_START+6&&code==BN_CLICKED){trigger(id-ACTION_START);return 0;}
         if(id==LIST_ID&&code==LBN_SELCHANGE){lastListIndex=int(SendMessageW(listControl,LB_GETCURSEL,0,0));detailForSelected();return 0;}
         if(id==SETUP_CLUB&&code==CBN_SELCHANGE){InvalidateRect(clubLogoWindow,nullptr,TRUE);return 0;}
