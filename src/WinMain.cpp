@@ -162,40 +162,49 @@ std::string playerDetails(int id){
 }
 void arrange(){
     if(!mainWindow)return;
-    RECT r{};GetClientRect(mainWindow,&r);int w=std::max(920,static_cast<int>(r.right)),h=std::max(650,static_cast<int>(r.bottom));
-    int left=215,right=w-24,bodyWidth=right-left;
+    RECT r{};GetClientRect(mainWindow,&r);
+    // Always use the REAL client rectangle. Inflating it caused text panels
+    // and buttons to be drawn over one another in resized/fullscreen windows.
+    const int w=std::max(1,int(r.right-r.left)),h=std::max(1,int(r.bottom-r.top));
+    if(w<580||h<440)return; // Avoid a partially laid-out intermediate WM_SIZE.
+    const int sidebarWidth=std::clamp(w/5,160,205);
+    const int left=sidebarWidth+12,right=w-20,bodyWidth=right-left;
     if(!started){
-        move(titleText,45,25,w-215,48);move(subtitleText,45,78,w-215,35);
+        move(titleText,45,25,std::max(290,w-215),48);
+        move(subtitleText,45,78,std::max(290,w-215),35);
         move(clubLogoWindow,w-150,24,105,105);
         move(setupName,45,160,400,35);move(setupClub,45,215,400,300);
         move(setupRole,45,270,400,230);move(setupDifficulty,45,325,400,230);
-        move(setupLeagues,470,160,std::max(300,w-515),270);
+        move(setupLeagues,470,160,std::max(180,w-505),230);
         move(setupHelp,45,387,400,150);
         move(setupStart,45,550,220,44);move(setupLoad,277,550,220,44);
         move(statusText,40,h-52,w-80,36);
     }else{
-        move(titleText,left,24,bodyWidth-100,40);
-        move(subtitleText,left,65,bodyWidth-100,22);
+        move(titleText,left,24,std::max(120,bodyWidth-115),40);
+        move(subtitleText,left,65,std::max(120,bodyWidth-115),22);
         move(clubLogoWindow,right-85,12,82,82);
         // Adaptive navigation: prevent the bottom items from overlapping the status bar.
-        const int navStep=std::clamp((h-150)/16,27,37);
+        const int navStep=std::clamp((h-167)/16,24,37);
         for(int i=0;i<16;++i)
-            move(nav[i],15,75+i*navStep,187,std::min(34,navStep-2));
+            move(nav[i],10,74+i*navStep,sidebarWidth-18,std::max(22,navStep-2));
         bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15;
         bool pitchNeeded=(page==4&&showPitch);
-        int contentY=102,contentH=std::max(300,h-284);
+        const int contentY=102;
+        const int actionsTop=h-121;
+        const int inputTop=h-169;
+        const int contentH=std::max(90,inputTop-contentY-12);
         if(listNeeded){
             if(pitchNeeded){
                 // Match mode: dominant animated stadium, match commentary below,
                 // selection/substitutions to the right (no text overlays).
-                const int side=std::max(205,bodyWidth*31/100);
-                const int pitchW=std::max(250,bodyWidth-side-12);
-                const int pitchH=std::max(230,contentH*70/100);
+                const int side=std::clamp(bodyWidth*31/100,175,320);
+                const int pitchW=std::max(150,bodyWidth-side-12);
+                const int pitchH=std::max(115,contentH*68/100);
                 move(pitchWindow,left,contentY,pitchW,pitchH);
-                move(mainText,left,contentY+pitchH+8,pitchW,std::max(50,contentH-pitchH-8));
+                move(mainText,left,contentY+pitchH+8,pitchW,std::max(40,contentH-pitchH-8));
                 move(listControl,left+pitchW+12,contentY,side,contentH);
             }else{
-                int listWidth=std::max(255,bodyWidth*39/100);
+                int listWidth=std::clamp(bodyWidth*39/100,175,360);
                 move(listControl,left,contentY,listWidth,contentH);
                 int textX=left+listWidth+12,textW=bodyWidth-listWidth-12;
                 move(mainText,textX,contentY,textW,contentH);
@@ -205,11 +214,12 @@ void arrange(){
             move(mainText,left,contentY,textW,contentH);
             move(pitchWindow,left+textW+14,contentY,bodyWidth-textW-14,300);
         }else move(mainText,left,contentY,bodyWidth,contentH);
-        move(inputControl,left,h-168,bodyWidth,37);
-        int buttonW=(bodyWidth-5*8)/5;
-        for(int i=0;i<5;++i)move(actions[i],left+i*(buttonW+8),h-120,buttonW,39);
+        move(inputControl,left,inputTop,bodyWidth,35);
+        int buttonW=std::max(55,(bodyWidth-4*8)/5);
+        for(int i=0;i<5;++i)move(actions[i],left+i*(buttonW+8),actionsTop,buttonW,38);
         move(actions[5],left,h-74,buttonW,32);
-        move(statusText,left+buttonW+12,h-74,bodyWidth-buttonW-12,34);
+        move(statusText,left+buttonW+12,h-74,
+                        std::max(50,bodyWidth-buttonW-12),34);
     }
 }
 std::vector<std::wstring> buttonTexts(int p){
@@ -553,6 +563,7 @@ void showPage(int next){
     // Owner-draw nav does not automatically repaint when a different page is selected.
     for(auto& button:nav)if(button)InvalidateRect(button,nullptr,TRUE);
     bool listNeeded=page==1||page==3||page==4||page==5||page==6||page==7||page==8||page==11||page==12||page==14||page==15;
+    show(mainText,true);
     show(listControl,listNeeded);show(inputControl,page==1||page==6||page==7||page==8||page==9||page==11||page==3||(page==4&&game().hasLiveMatch()));
     show(pitchWindow,page==4&&showPitch);
     for(int i=0;i<16;++i)show(nav[i],true);
@@ -604,7 +615,12 @@ void showPage(int next){
             break;
         case 15:detailForSelected();break;
     }
-    tell(game().status());arrange();InvalidateRect(pitchWindow,nullptr,TRUE);InvalidateRect(clubLogoWindow,nullptr,TRUE);
+    tell(game().status());
+    arrange();
+    RedrawWindow(mainWindow,nullptr,nullptr,
+        RDW_INVALIDATE|RDW_ERASE|RDW_ALLCHILDREN|RDW_UPDATENOW);
+    InvalidateRect(pitchWindow,nullptr,TRUE);
+    InvalidateRect(clubLogoWindow,nullptr,TRUE);
 }
 void showSetup(){
     trace("showSetup BEGIN");
@@ -841,7 +857,7 @@ void drawButton(const DRAWITEMSTRUCT* dis){
     bool primaryButton=(dis->CtlID>=ACTION_START&&dis->CtlID<ACTION_START+6)||(dis->CtlID==SETUP_START);
     COLORREF color=navButton?(page==int(dis->CtlID-NAV_START)?RGB(28,65,117):RGB(16,27,45)):
         (primaryButton?primary:RGB(32,52,81));
-    if(dis->itemState&ODS_SELECTED)color=RGB(40,84,132);
+    if(!navButton&&(dis->itemState&ODS_SELECTED))color=RGB(40,84,132);
     HBRUSH brush=CreateSolidBrush(color);
     FillRect(dc,&r,brush);DeleteObject(brush);
     wchar_t text[256];GetWindowTextW(dis->hwndItem,text,256);
@@ -882,6 +898,14 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         SendMessageW(setupLeagues,WM_SETFONT,WPARAM(smallFont),TRUE);
         SetTimer(hwnd,PITCH_TIMER,PITCH_TICK_MS,nullptr);
         trace("WM_CREATE before setup");showSetup();trace("WM_CREATE END");return 0;
+    }
+    case WM_GETMINMAXINFO:{
+        auto* info=reinterpret_cast<MINMAXINFO*>(l);
+        // The minimum remains small enough for common laptop displays;
+        // all children still lay out from the actual client size.
+        info->ptMinTrackSize.x=850;
+        info->ptMinTrackSize.y=680;
+        return 0;
     }
     case WM_SIZE:arrange();return 0;
     case WM_TIMER:{
@@ -927,7 +951,12 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     }
     case WM_DRAWITEM:{auto* dis=reinterpret_cast<DRAWITEMSTRUCT*>(l);if(dis->CtlType==ODT_BUTTON){drawButton(dis);return TRUE;}break;}
     case WM_CTLCOLORSTATIC:{
-        HDC dc=HDC(w);SetTextColor(dc,white);SetBkColor(dc,background);SetBkMode(dc,TRANSPARENT);
+        HDC dc=HDC(w);
+        SetTextColor(dc,white);
+        SetBkColor(dc,background);
+        // Opaque backing is essential: transparent STATIC labels kept
+        // fragments of previous titles/status text after page changes.
+        SetBkMode(dc,OPAQUE);
         return LRESULT(backgroundBrush);
     }
     case WM_CTLCOLOREDIT:case WM_CTLCOLORLISTBOX:{
