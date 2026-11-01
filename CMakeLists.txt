@@ -82,3 +82,8 @@ add_executable(fu_real_roster_tests tests/test_real_rosters.cpp)
 target_link_libraries(fu_real_roster_tests PRIVATE fu_core)
 add_test(NAME real_wikidata_rosters_and_save COMMAND fu_real_roster_tests)
 set_tests_properties(real_wikidata_rosters_and_save PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+
+add_executable(fu_real_database_tests tests/test_real_database.cpp)
+target_link_libraries(fu_real_database_tests PRIVATE fu_core)
+add_test(NAME bundled_real_player_values COMMAND fu_real_database_tests)
+set_tests_properties(bundled_real_player_values PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
