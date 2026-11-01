@@ -3406,7 +3406,7 @@ bool Game::importPlayers(const std::string& path){
             std::istringstream stream(line);
             std::string token;
             while(std::getline(stream,token,';'))fields.push_back(token);
-            if(fields.size()!=5)continue;
+            if(fields.size()!=5&&fields.size()!=6)continue;
             try{
                 const int club=std::stoi(fields[0]);
                 // Exactly the 36 licensed top-division club identities, never
@@ -3460,6 +3460,33 @@ bool Game::importPlayers(const std::string& path){
                 slot->position=pos;
                 slot->age=age;
                 slot->sourceQid=qid;
+                // June 2026 market snapshot. This is source data, unlike
+                // simulated skills, wages and potential.
+                if(fields.size()==6&&!fields[5].empty()){
+                    const long long market=std::stoll(fields[5]);
+                    if(market>=10000&&market<=2000000000LL){
+                        slot->value=int(std::min(market,2000000000LL));
+                        // Use the public valuation as a coarse ability anchor.
+                        // Exact attributes remain gameplay estimates, NOT sourced
+                        // performance ratings.
+                        const int level=clamp(int(53.0+
+                            12.0*std::log10(std::max(0.01,double(market)/1000000.0))),
+                            43,91);
+                        const int current=playerRating(*slot);
+                        const int delta=std::clamp(level-current,-19,19);
+                        for(int& skill:slot->skill)
+                            skill=clamp(skill+delta,10,99);
+                        if(pos=="GK")slot->skill[9]=clamp(
+                            std::max(slot->skill[9],level+2),10,99);
+                        else if(pos=="DC"||pos=="DL"||pos=="DR")
+                            slot->skill[3]=clamp(
+                                std::max(slot->skill[3],level+2),10,99);
+                        else if(pos=="ST")slot->skill[1]=clamp(
+                            std::max(slot->skill[1],level+2),10,99);
+                        else slot->skill[2]=clamp(
+                            std::max(slot->skill[2],level+2),10,99);
+                    }
+                }
                 slot->potential=clamp(std::max(slot->potential,
                    playerRating(*slot)+std::max(0,27-age)/3),20,99);
                 ++imported;
