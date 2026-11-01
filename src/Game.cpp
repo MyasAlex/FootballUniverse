@@ -2810,7 +2810,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_11\n";
+    f<<"FUSAVE_12\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -2831,7 +2831,7 @@ std::string Game::save(const std::string& path)const{
         <<p.parentClub<<' '<<p.loanReturnDay<<' '<<p.loanWageShare<<' '
         <<p.careerAppearances<<' '<<p.developmentXP<<' '<<p.mentorId
         <<' '<<p.developedSkills<<' '<<p.academyGraduate<<' '<<p.assists<<' '<<p.suspension<<'\n';
-        putString(f,p.name);putString(f,p.position);putString(f,p.personality);
+        putString(f,p.name);putString(f,p.position);putString(f,p.personality);putString(f,p.sourceQid);
     }
     auto writeStats=[&](const std::vector<MatchPlayerStat>& stats){
         f<<stats.size()<<'\n';
@@ -2934,15 +2934,16 @@ std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
-    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
-    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
-    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
-    const bool version9=(header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11");
-    const bool version10=(header=="FUSAVE_10"||header=="FUSAVE_11");
-    const bool version11=(header=="FUSAVE_11");
+    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
+    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
+    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
+    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
+    const bool version9=(header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
+    const bool version10=(header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
+    const bool version11=(header=="FUSAVE_11"||header=="FUSAVE_12");
+    const bool version12=(header=="FUSAVE_12");
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
@@ -3010,6 +3011,14 @@ std::string Game::load(const std::string& path){
                 throw std::runtime_error("Статистика и дисквалификации игроков");
             if(!getString(f,p.name)||!getString(f,p.position)||!getString(f,p.personality))
                 throw std::runtime_error("Данные игрока");
+            if(version12){
+                if(!getString(f,p.sourceQid)||p.sourceQid.size()>16||
+                   (!p.sourceQid.empty()&&
+                    (p.sourceQid[0]!='Q'||
+                     !std::all_of(p.sourceQid.begin()+1,p.sourceQid.end(),
+                                  [](unsigned char c){return c>='0'&&c<='9';}))))
+                    throw std::runtime_error("Источник личности футболиста");
+            }
             loaded.players_.push_back(std::move(p));
         }
         auto readStats=[&](std::vector<MatchPlayerStat>& stats){
