@@ -18,7 +18,7 @@ SOURCE='https://raw.githubusercontent.com/withqwerty/reep/main/data/people.csv'
 COLUMNS=['source_id','wikidata_qid','name','position','birth_date','nationality']
 
 def clean(value, limit=140):
-    return ' '.join(str(value or '').replace(';',',').replace('\x00','').split())[:limit]
+    return ' '.join(str(value or '').replace(';',',').replace('\x00','').replace('\"','').split())[:limit]
 
 def build(source, dest, metadata, min_year=1981, max_year=2011):
     dest=pathlib.Path(dest);dest.parent.mkdir(parents=True, exist_ok=True)
@@ -27,7 +27,7 @@ def build(source, dest, metadata, min_year=1981, max_year=2011):
            'players_unknown_birthday':0,'players_outside_age_range':0,
            'players_without_position':0,'duplicate_ids':0,'duplicate_wikidata':0,
            'players_written':0,'distinct_nationalities':0}
-    ids=set();qids=set();countries=set()
+    ids=set();qids=set();countries=set();records=[]
     with open(source,encoding='utf-8-sig',newline='') as inp, open(dest,'w',encoding='utf-8',newline='') as out:
         rd=csv.DictReader(inp);wr=csv.writer(out,delimiter=';',lineterminator='\n',quoting=csv.QUOTE_MINIMAL)
         wr.writerow(COLUMNS)
@@ -38,7 +38,7 @@ def build(source, dest, metadata, min_year=1981, max_year=2011):
             if record.get('type','').strip().lower()!='player':
                 stats['coaches_skipped']+=1;continue
             name=clean(record.get('name'))
-            if len(name)<3 or len(name)>140:
+            if len(name)<3 or len(name)>140 or name.startswith("- "):
                 stats['players_missing_name']+=1;continue
             pid=clean(record.get('reep_id'),40)
             if not re.fullmatch(r'reep_p[a-zA-Z0-9_]{2,32}',pid):continue
@@ -63,7 +63,10 @@ def build(source, dest, metadata, min_year=1981, max_year=2011):
             ids.add(pid)
             if qid:qids.add(qid)
             if country:countries.add(country)
-            wr.writerow([pid,qid,name,position,dob,country]);stats['players_written']+=1
+            records.append([pid,qid,name,position,dob,country]);stats['players_written']+=1
+        # Sort by name so that the first page is useful, not source row order.
+        for record in sorted(records,key=lambda x:x[2].casefold()):
+            wr.writerow(record)
     stats['distinct_nationalities']=len(countries)
     with dest.open('rb') as f:
         for chunk in iter(lambda:f.read(1024*1024),b''):sha.update(chunk)

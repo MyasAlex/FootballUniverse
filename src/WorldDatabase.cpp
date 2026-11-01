@@ -16,6 +16,17 @@ bool containsInsensitive(std::string_view haystack,const std::string& needle){
     if(needle.empty())return true;
     return lower(haystack).find(needle)!=std::string::npos;
 }
+bool matchPosition(std::string_view role,const std::string& requested){
+    if(requested.empty())return true;
+    const auto value=lower(role);
+    if(requested=="forward")return value.find("forward")!=std::string::npos||
+        value.find("striker")!=std::string::npos||value.find("winger")!=std::string::npos;
+    if(requested=="defender")return value.find("defender")!=std::string::npos||
+        value.find("back")!=std::string::npos;
+    if(requested=="midfielder")return value.find("midfield")!=std::string::npos;
+    if(requested=="goalkeeper")return value.find("goalkeeper")!=std::string::npos||value=="gk";
+    return value.find(requested)!=std::string::npos;
+}
 std::vector<std::string> split(const std::string& s){
     std::vector<std::string> parts;
     size_t start=0;
@@ -84,7 +95,7 @@ WorldResults WorldDatabase::search(const WorldQuery& q) const{
     for(size_t i=0;i<players_.size();++i){
         const auto& p=players_[i];
         if(q.maxAge>0&&(p.age<=0||p.age>q.maxAge))continue;
-        if(!containsInsensitive(p.name,name)||!containsInsensitive(p.position,position)||
+        if(!containsInsensitive(p.name,name)||!matchPosition(p.position,position)||
            !containsInsensitive(p.nationality,country))continue;
         if(result.total>=q.offset&&result.indices.size()<limit)result.indices.push_back(i);
         ++result.total;

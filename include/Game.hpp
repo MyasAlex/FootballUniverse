@@ -7,6 +7,8 @@
 
 namespace fu {
 
+struct WorldPlayer; // Lightweight external identity, not an active squad member.
+
 struct Player {
     int id=0, club=0, age=18, potential=70;
     std::string name, position, personality;
@@ -201,6 +203,7 @@ public:
     const Club& myClub() const;
     Club& myClub();
     const Player* findPlayer(int id) const;
+    std::string addWorldPlayerToSandbox(const WorldPlayer& identity);
     const Club* findClub(int id) const;
     int teamId() const { return teamId_; }
     int day() const { return day_; }

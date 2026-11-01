@@ -284,6 +284,8 @@ bool actionAllowed(int screen,int action){
         return coach;
     case WORLD_MARKET_PAGE:
         return action!=3||coach;
+    case WORLD_DATABASE_PAGE:
+        return action!=4||game().role()==fu::Role::Sandbox||game().difficulty()==fu::Difficulty::Free;
     case 15:return action>=3||coach;
     case ANALYTICS_PAGE:return action>=3||coach;
     case BOARD_PAGE:return action!=1||game().role()==fu::Role::Coach||
@@ -393,7 +395,7 @@ std::vector<std::wstring> buttonTexts(int p){
         case SAVES_PAGE:return {L"Сохранить",L"Загрузить",L"Из копии",L"Обзор",L"Обновить"};
         case ANALYTICS_PAGE:return {L"Линия защиты",L"Риск атаки",L"Стандарты",L"Подготовка",L"Матч"};
         case BOARD_PAGE:return {L"Обновить",L"Запрос бюджета",L"Финансы",L"Академия",L"Почта"};
-        case WORLD_DATABASE_PAGE:return {L"Найти",L"Далее →",L"← Назад",L"Сброс",L"Трансферы"};
+        case WORLD_DATABASE_PAGE:return {L"Найти",L"Далее →",L"← Назад",L"Сброс",L"В команду (песоч.)"};
         default:return {L"Обзор",L"—",L"—",L"—",L"—"};
     }
 }
@@ -653,7 +655,9 @@ void detailForSelected(){
         if(!player->wikidataQid.empty())out<<"\nWikidata: https://www.wikidata.org/wiki/"<<player->wikidataQid;
         out<<"\n\nЭто справочный каталог, не игровой трансферный рынок. "
               "Принадлежность к клубу и актуальность карьеры не подтверждены. "
-              "Зарплаты, контракты и цены не импортированы.";
+              "Зарплаты, контракты и цены не импортированы. "
+              "В режиме песочницы можно создать игровую копию выбранного футболиста, "
+              "но её характеристики и контракт будут вымышленными.";
         textContent(out.str());return;
     }
     if(page==1)textContent(playerDetails(id)+"\n\n"+game().lineupText());
@@ -1093,7 +1097,10 @@ void trigger(int action){
         if(action==1){worldOffset+=120;response="Следующая страница.";}
         if(action==2){worldOffset=worldOffset>=120?worldOffset-120:0;response="Предыдущая страница.";}
         if(action==3){resetWorldSearch();response="Фильтры очищены.";}
-        if(action==4){go(6);return;}
+        if(action==4){
+            const fu::WorldPlayer* player=id>=0?worldDatabase().at(size_t(id)):nullptr;
+            response=player?game().addWorldPlayerToSandbox(*player):"Выберите футболиста из каталога.";
+        }
         const auto matches=worldDatabase().search({worldQuery.name,worldQuery.position,worldQuery.country,
                                                      worldQuery.maxAge,worldOffset,120});
         if(worldOffset>=matches.total&&worldOffset>0){worldOffset=matches.total?((matches.total-1)/120)*120:0;}

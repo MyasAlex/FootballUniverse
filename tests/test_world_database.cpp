@@ -1,4 +1,5 @@
 #include "WorldDatabase.hpp"
+#include "Game.hpp"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -27,12 +28,30 @@ int main(){
     assert(database.at(2)&&database.at(2)->age==0);
     auto match=database.search({"alice", "forward", "norway"});
     assert(match.total==1&&match.indices.size()==1);
+    assert(database.search({"", "FORWARD", ""}).total==1);
     auto under25=database.search({"", "", "", 25});
     assert(under25.total==10001); // Alice (23) + 10000 generated, unknown DOB excluded
     auto paged=database.search({"regular", "defender", "norway", 0, 900, 30});
     assert(paged.total==10000&&paged.indices.size()==30&&paged.indices[0]==903);
     auto failed=database.load("not_found.csv");
     assert(!failed&&database.size()==10003); // failed reload preserves working dataset
+    fu::Game normal;
+    normal.newCareer("Test",0,fu::Role::Coach,fu::Difficulty::Realistic,{0,1});
+    assert(normal.addWorldPlayerToSandbox(*database.at(0)).find("только в режиме")!=std::string::npos);
+    fu::Game sandbox;
+    sandbox.newCareer("Test",0,fu::Role::Sandbox,fu::Difficulty::Free,{0,1});
+    const auto originalSquad=sandbox.ownPlayers().size();
+    assert(sandbox.addWorldPlayerToSandbox(*database.at(0)).find("добавлен")!=std::string::npos);
+    assert(sandbox.ownPlayers().size()==originalSquad+1);
+    assert(sandbox.realPlayerCount(0)>=1);
+    assert(sandbox.addWorldPlayerToSandbox(*database.at(0)).find("уже присутствует")!=std::string::npos);
+    assert(sandbox.addWorldPlayerToSandbox(*database.at(2)).find("нет подтверждаемого")!=std::string::npos);
+    const auto save=std::filesystem::path("sandbox_world_player.fus");
+    assert(sandbox.save(save.string()).find("сохранена")!=std::string::npos);
+    fu::Game reloaded;
+    assert(reloaded.load(save.string()).find("загружена")!=std::string::npos);
+    assert(reloaded.ownPlayers().size()==originalSquad+1);
+    std::filesystem::remove(save);
     std::filesystem::remove(p);
     std::cout<<"PASS: global index validation, 10k records, search filters, pages, fallback\n";
 }
