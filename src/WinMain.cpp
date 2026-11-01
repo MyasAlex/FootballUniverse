@@ -148,6 +148,11 @@ std::string playerDetails(int id){
     if(p->injured)o<<"Травма: ещё "<<p->injured<<" дней\n";
     if(p->suspension)o<<"Дисквалификация: "<<p->suspension<<" матча\n";
     o<<"Голы / ассисты за сезон: "<<p->goals<<" / "<<p->assists<<"\n";
+    if(!p->sourceQid.empty())
+        o<<"РЕАЛЬНЫЙ ФУТБОЛИСТ: Wikidata "<<p->sourceQid
+         <<" | источник: Wikipedia/Wikidata (2026)\n";
+    else o<<"СГЕНЕРИРОВАННЫЙ ИГРОК (демо)\n";
+    o<<"Навыки, трансферная стоимость и зарплата — игровые оценки, не данные FIFA/FM.\n";
     return o.str();
 }
 void arrange(){
@@ -218,7 +223,7 @@ std::vector<std::wstring> buttonTexts(int p){
         case 11:return {L"Подписать игрока",L"Поиск талантов",L"Нанять штаб",L"Наставник",L"Отношения"};
         case 12:return {L"Обновить",L"Обзор",L"—",L"—",L"—"};
         case 13:return {L"Календарь",L"Кубки",L"Победители",L"Бомбардиры",L"Отчёт матча"};
-        case 14:return {L"Вкл./выкл. лигу",L"Новая карьера",L"Сохранить",L"Загрузить",L"Импорт CSV"};
+        case 14:return {L"Вкл./выкл. лигу",L"Новая карьера",L"Сохранить",L"Загрузить",L"Реальная база"};
         case 15:return {L"Подать заявку",L"Принять оффер",L"Отозвать",L"Рынок тренеров",L"Справка"};
         default:return {L"Обзор",L"—",L"—",L"—",L"—"};
     }
@@ -805,7 +810,11 @@ void trigger(int action){
         if(action==1){showSetup();return;}
         if(action==2)response=game().save(saveFile);
         if(action==3)response=game().load(saveFile);
-        if(action==4)response=game().importPlayers("data/players.csv")?"CSV загружен":"Не удалось загрузить data/players.csv";
+        if(action==4){
+            bool ok=game().importPlayers("data/real_players.csv");
+            response=game().status();
+            if(!ok)response+=" Открой новую карьеру или проверь наличие data/real_players.csv.";
+        }
     }else if(page==15){
         if(action==0)response=game().applyForJob(id);
         if(action==1)response=game().acceptJobOffer();
