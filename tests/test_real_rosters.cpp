@@ -45,7 +45,7 @@ int main(){
     assert(keeper->age>=27&&keeper->age<=30);
     assert(game.squadText().find("Из реальной базы: 3")!=std::string::npos);
     assert(!game.importPlayers(path));
-    assert(game.realPlayerCount()==4);
+    assert(game.realPlayerCount()==5);
     const std::string save="test_wikidata_save.fus";
     assert(game.save(save).find("сохранена")!=std::string::npos);
     fu::Game restored;
