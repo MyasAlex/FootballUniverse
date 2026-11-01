@@ -1093,7 +1093,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int showCommand){
     WNDCLASSEXW wc{};wc.cbSize=sizeof(wc);wc.hInstance=instance;wc.lpfnWndProc=windowProc;
     wc.lpszClassName=L"FootballUniverseDesktop";wc.hCursor=LoadCursor(nullptr,IDC_ARROW);wc.hIcon=LoadIcon(nullptr,IDI_APPLICATION);
     wc.hbrBackground=backgroundBrush;RegisterClassExW(&wc);
-    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.14 — футбольный менеджер",
+    trace("classes REGISTERED");HWND window=CreateWindowExW(0,wc.lpszClassName,L"Football Universe 0.12.2 — проверка исправлений",
         WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1240,840,nullptr,nullptr,instance,nullptr);
     if(!window){MessageBoxW(nullptr,L"Не удалось создать окно",L"Ошибка",MB_ICONERROR);return 1;}
     trace("window CREATED");ShowWindow(window,showCommand);trace("window SHOWN");UpdateWindow(window);trace("window UPDATED");
