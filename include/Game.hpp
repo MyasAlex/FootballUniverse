@@ -21,6 +21,7 @@ struct Player {
     int careerAppearances=0;
     int developmentXP=0, mentorId=-1, developedSkills=0;
     bool academyGraduate=false;
+    std::string sourceQid; // Empty for generated players; Q... for real Wikidata identities.
 };
 struct Club {
     int id=0, league=0;
@@ -244,6 +245,7 @@ public:
     std::string save(const std::string& path) const;
     std::string load(const std::string& path);
     bool importPlayers(const std::string& path);
+    int realPlayerCount(int clubId=-1) const;
     void post(std::string title, std::string body);
 private:
     std::vector<Club> clubs_;
