@@ -20,6 +20,18 @@ jobs:
         run: cmake --build build-cloud --config Release --parallel 2
       - name: Test game engine
         run: ctest --test-dir build-cloud -C Release --output-on-failure
+      - name: Verify packaged offline real-footballer database
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $csv = 'data/real_players.csv'
+          if (-not (Test-Path $csv)) { throw "Real-player dataset missing" }
+          $players = @(Import-Csv $csv -Delimiter ';' -Encoding UTF8)
+          $clubs = @($players | Select-Object -ExpandProperty club_id -Unique)
+          if ($players.Count -lt 200 -or $clubs.Count -lt 25) {
+            throw "Insufficient real-player roster: $($players.Count) players, $($clubs.Count) clubs"
+          }
+          Write-Host "OFFLINE REAL PLAYERS: $($players.Count), CLUBS: $($clubs.Count)"
       - name: Package portable EXE and resources
         shell: pwsh
         run: |
