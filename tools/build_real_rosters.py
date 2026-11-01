@@ -106,27 +106,171 @@ def position_code(label):
     return "MC"
 
 
-def query_players(qids):
-    values = " ".join("wd:" + qid for qid in qids)
-    # Include open-ended club memberships and those active on the snapshot date.
-    query = f"""
-SELECT ?person ?personLabel ?club ?birth ?positionLabel ?start ?end WHERE {{
-  VALUES ?club {{ {values} }}
-  ?person p:P54 ?membership .
-  ?membership ps:P54 ?club .
-  OPTIONAL {{ ?membership pq:P580 ?start . }}
-  OPTIONAL {{ ?membership pq:P582 ?end . }}
-  FILTER(!BOUND(?start) || ?start <= "2026-11-01T23:59:59Z"^^xsd:dateTime)
-  FILTER(!BOUND(?end) || ?end >= "2026-08-01T00:00:00Z"^^xsd:dateTime)
-  ?person wdt:P569 ?birth .
-  OPTIONAL {{ ?person wdt:P413 ?position . }}
-  SERVICE wikibase:label {{ bd:serviceParam wikibase:language "en". }}
-}}
-LIMIT 3000
-"""
-    data = fetch_json(SPARQL, {"query": query, "format": "json"},
-                      timeout=80)
-    return data.get("results", {}).get("bindings", [])
+def wiki_wikitext(title):
+    data = fetch_json(API, {
+        "action": "parse", "page": title, "prop": "wikitext",
+        "format": "json", "redirects": "1"
+    }, timeout=45)
+    return data["parse"]["wikitext"]["*"]
+
+
+def list_templates(text):
+    import re
+    # Balanced template parsing: wiki links and nested name templates contain pipes.
+    hits = []
+    for found in re.finditer(r"\{\{\s*Fs player\b", text, re.IGNORECASE):
+        at, i, depth = found.start(), found.start(), 0
+        while i < len(text):
+            if text[i:i+2] == "{{":
+                depth += 1
+                i += 2
+            elif text[i:i+2] == "}}":
+                depth -= 1
+                i += 2
+                if depth == 0:
+                    hits.append(text[at:i])
+                    break
+            else:
+                i += 1
+    return hits
+
+
+def template_fields(body):
+    fields = {}
+    content = body[2:-2]
+    parts = []
+    start, i, braces, links = 0, 0, 0, 0
+    while i < len(content):
+        if content[i:i+2] == "{{":
+            braces += 1
+            i += 2
+        elif content[i:i+2] == "}}":
+            braces -= 1
+            i += 2
+        elif content[i:i+2] == "[[":
+            links += 1
+            i += 2
+        elif content[i:i+2] == "]]":
+            links -= 1
+            i += 2
+        elif content[i] == "|" and braces == 0 and links == 0:
+            parts.append(content[start:i])
+            start = i + 1
+            i += 1
+        else:
+            i += 1
+    parts.append(content[start:])
+    for piece in parts[1:]:
+        if "=" not in piece:
+            continue
+        key, value = piece.split("=", 1)
+        fields[key.strip().lower()] = value.strip()
+    return fields
+
+
+def squad_section(text):
+    import re
+    headings = list(re.finditer(
+        r"(?m)^(={2,6})\s*([^=\n]+?)\s*\1\s*$", text))
+    eligible = ("current squad", "first-team squad", "first team squad",
+                "first team", "senior squad", "players", "playing squad")
+    for heading in headings:
+        title = heading.group(2).strip().lower()
+        if title not in eligible:
+            continue
+        level = len(heading.group(1))
+        next_heading = len(text)
+        for following in headings:
+            if following.start() > heading.start() and len(following.group(1)) <= level:
+                next_heading = following.start()
+                break
+        section = text[heading.end():next_heading]
+        if len(list_templates(section)) >= 7:
+            return section
+    # If no recognized heading, do not blindly include alumni or loan lists.
+    return ""
+
+
+def squad_players(title):
+    import re
+    text = wiki_wikitext(title)
+    section = squad_section(text)
+    raw = list_templates(section)
+    players = []
+    for body in raw:
+        fields = template_fields(body)
+        markup = fields.get("name", "")
+        position = fields.get("pos", "").strip().upper()
+        # [[Player article|Display]] or {{sortname|Given|Family}}.
+        match = re.search(r"\[\[([^\]\|#]+)(?:\|([^\]]+))?\]\]", markup)
+        if match:
+            article = match.group(1).strip()
+            name = (match.group(2) or article).strip()
+        else:
+            sorted_name = re.search(
+                r"\{\{\s*sortname\s*\|\s*([^|}]+)\|\s*([^|}]+)", markup,
+                re.IGNORECASE)
+            if not sorted_name:
+                continue
+            name = sorted_name.group(1).strip() + " " + sorted_name.group(2).strip()
+            article = name
+        if not article or not name or position not in ("GK", "DF", "MF", "FW"):
+            continue
+        players.append({
+            "title": article, "name": name, "raw_position": position
+        })
+    found = {}
+    for p in players:
+        found[p["title"]] = p
+    return list(found.values())
+
+
+def wikidata_for_titles(titles):
+    # Fetch QID pageprops in groups of 40 Wikipedia articles per API request.
+    qids = {}
+    for start in range(0, len(titles), 40):
+        batch = titles[start:start+40]
+        result = fetch_json(API, {
+            "action": "query", "prop": "pageprops", "ppprop": "wikibase_item",
+            "redirects": "1", "titles": "|".join(batch), "format": "json",
+        })
+        norm = {x["from"]: x["to"] for x in result["query"].get("normalized", [])}
+        redirect = {x["from"]: x["to"] for x in result["query"].get("redirects", [])}
+        page_map = {
+            p["title"]: p.get("pageprops", {}).get("wikibase_item")
+            for p in result["query"]["pages"].values()
+        }
+        for title in batch:
+            canonical = norm.get(title, title)
+            canonical = redirect.get(canonical, canonical)
+            if page_map.get(canonical):
+                qids[title] = page_map[canonical]
+        time.sleep(.2)
+    return qids
+
+
+def wikidata_birthdates(qids):
+    dates = {}
+    unique = list(dict.fromkeys(qids))
+    for start in range(0, len(unique), 40):
+        batch = unique[start:start+40]
+        result = fetch_json("https://www.wikidata.org/w/api.php", {
+            "action": "wbgetentities", "ids": "|".join(batch),
+            "props": "claims", "format": "json",
+        })
+        for qid, entity in result.get("entities", {}).items():
+            claims = entity.get("claims", {}).get("P569", [])
+            for claim in claims:
+                if claim.get("rank") == "deprecated":
+                    continue
+                value = claim.get("mainsnak", {}).get("datavalue", {}).get("value", {})
+                raw = value.get("time") if isinstance(value, dict) else None
+                date = parse_date(raw[1:] if raw and raw.startswith("+") else raw)
+                if date:
+                    dates[qid] = date
+                    break
+        time.sleep(.2)
+    return dates
 
 
 def parse_date(value):
@@ -134,100 +278,81 @@ def parse_date(value):
         return None
     try:
         date = dt.date.fromisoformat(value[:10])
-        if not (1978 <= date.year <= 2011):
-            return None
-        return date
+        return date if 1978 <= date.year <= 2011 else None
     except (ValueError, TypeError):
         return None
 
 
 def generate(probe=False):
-    ids = club_qids()
-    print("Club Wikidata IDs:", list(zip(TITLES[:6], ids[:6])), flush=True)
-    club_by_qid = {q: i for i, q in enumerate(ids)}
-    records = {}
-    # Six clubs per batch to reduce server impact while limiting query complexity.
-    batches = [(0, 1)] if probe else [(i, min(i + 3, 36)) for i in range(0, 36, 3)]
-    for start, stop in batches:
-        rows = query_players(ids[start:stop])
-        print(f"Wikidata clubs {start}-{stop-1}: {len(rows)} statements",
-              flush=True)
-        for row in rows:
-            def val(prop):
-                return row.get(prop, {}).get("value", "")
-            club = val("club").split("/")[-1]
-            person = val("person").split("/")[-1]
-            cid = club_by_qid.get(club)
-            birth = parse_date(val("birth"))
-            name = val("personLabel").strip()
-            if cid is None or birth is None or not person.startswith("Q") or not name or name == person:
-                continue
-            age = SOURCE_DATE.year - birth.year - (
-                (SOURCE_DATE.month, SOURCE_DATE.day) < (birth.month, birth.day))
-            if age < 15 or age > 45:
-                continue
-            pos = position_code(val("positionLabel"))
-            start_date = parse_date(val("start")) or dt.date(1900, 1, 1)
-            key = (person, cid)
-            current = records.get(key)
-            if current is None or start_date > current[0] or (
-                start_date == current[0] and pos != "MC"):
-                records[key] = (start_date, {
-                    "club_id": cid, "wikidata_qid": person, "name": name,
-                    "position": pos, "birth_date": birth.isoformat()
-                })
-        time.sleep(.6)
-    # A player appearing as active for multiple clubs may reflect stale statements:
-    # keep only the latest dated membership and discard equal-date ambiguity.
-    by_person = defaultdict(list)
-    for (qid, cid), item in records.items():
-        by_person[qid].append(item)
-    valid = []
-    for qid, choices in by_person.items():
-        choices.sort(key=lambda x: x[0], reverse=True)
-        if len(choices) > 1 and choices[0][0] == choices[1][0]:
-            continue
-        valid.append(choices[0][1])
-    groups = defaultdict(list)
-    for row in valid:
-        groups[row["club_id"]].append(row)
-    selected = []
-    for club in range(36):
-        group = groups[club]
-        # Enough goalkeepers, defenders and attackers to form proper XI.
-        ranks = {"GK": 0, "DC": 1, "DR": 1, "DL": 1,
-                 "DMC": 2, "MC": 2, "AMC": 2, "AMR": 3, "AML": 3, "ST": 3}
-        group.sort(key=lambda x: (ranks.get(x["position"], 2), x["birth_date"],
-                                  x["name"]))
-        selected.extend(group[:30])
+    # No WDQS/SPARQL dependency; obtain currently published roster facts from Wikipedia
+    # and player QID + date of birth from Wikidata (CC0). No scraping ratings.
+    all_rosters = {}
+    limit = 1 if probe else len(TITLES)
+    for cid, title in enumerate(TITLES[:limit]):
+        try:
+            entries = squad_players(title)
+        except Exception as exc:
+            print(f"WARNING {cid} {title}: {exc}", file=sys.stderr, flush=True)
+            entries = []
+        all_rosters[cid] = entries
+        print(f"Club #{cid}: {title} — {len(entries)} roster names", flush=True)
+        time.sleep(.2)
     if probe:
-        print("PROBE: ", json.dumps(selected[:6], ensure_ascii=False), flush=True)
+        print("EXAMPLE", json.dumps(all_rosters.get(0, [])[:12], ensure_ascii=False))
         return
-    if len(selected) < 100 or sum(bool(groups[n]) for n in range(36)) < 12:
-        raise RuntimeError(f"Insufficient CC0 coverage: {len(selected)} players, "
-                           f"{sum(bool(groups[n]) for n in range(36))} clubs")
-    folder = ROOT / "data"
-    folder.mkdir(parents=True, exist_ok=True)
-    output = folder / "real_players.csv"
+    titles = list(dict.fromkeys(p["title"] for group in all_rosters.values()
+                                for p in group))
+    if len(titles) < 100:
+        raise RuntimeError(f"Insufficient Wikipedia squad templates: {len(titles)} names")
+    qids = wikidata_for_titles(titles)
+    births = wikidata_birthdates(list(qids.values()))
+    chosen = []
+    seen = set()
+    positions = {"GK": "GK", "DF": "DC", "MF": "MC", "FW": "ST"}
+    for club in range(36):
+        count = 0
+        for p in all_rosters[club]:
+            qid = qids.get(p["title"])
+            dob = births.get(qid)
+            if not qid or not dob or qid in seen:
+                continue
+            age = SOURCE_DATE.year - dob.year - (
+                (SOURCE_DATE.month, SOURCE_DATE.day) < (dob.month, dob.day))
+            if not 16 <= age <= 45:
+                continue
+            seen.add(qid)
+            chosen.append({
+                "club_id": club, "wikidata_qid": qid, "name": p["name"],
+                "position": positions[p["raw_position"]],
+                "birth_date": dob.isoformat(),
+            })
+            count += 1
+            if count >= 28:
+                break
+    counts = {i: sum(row["club_id"] == i for row in chosen) for i in range(36)}
+    if len(chosen) < 100 or sum(n >= 5 for n in counts.values()) < 10:
+        raise RuntimeError(f"Insufficient verified rows: {len(chosen)} "
+                           f"across {sum(n >= 5 for n in counts.values())} clubs")
+    output = ROOT / "data" / "real_players.csv"
+    output.parent.mkdir(exist_ok=True, parents=True)
     with output.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(file,
             fieldnames=["club_id", "wikidata_qid", "name", "position", "birth_date"],
             delimiter=";")
         writer.writeheader()
-        writer.writerows(selected)
-    summary = {
-        "source": "Wikidata P54 club membership, P569 birth, P413 position",
-        "license": "CC0 1.0",
+        writer.writerows(chosen)
+    meta = {
         "snapshot_date": SOURCE_DATE.isoformat(),
-        "real_player_count": len(selected),
-        "clubs_with_players": sum(bool(groups[n]) for n in range(36)),
-        "club_counts": {TITLES[i]: len(groups[i][:30]) for i in range(36)},
-        "note": "Club memberships may be stale; no commercial ratings copied.",
+        "source": "Wikipedia current squad tables + Wikidata P569 DOB/QID",
+        "licenses": "Wikipedia CC BY-SA 4.0, Wikidata CC0 1.0",
+        "total_players": len(chosen),
+        "clubs_with_5plus": sum(n >= 5 for n in counts.values()),
+        "club_counts": {TITLES[i]: counts[i] for i in range(36)},
+        "notes": "Public wiki snapshots, may lag transfers. No EA/SI ratings."
     }
-    (folder / "real_players_meta.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
-
+    (ROOT / "data" / "real_players_meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(meta, ensure_ascii=False, indent=2), flush=True)
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
