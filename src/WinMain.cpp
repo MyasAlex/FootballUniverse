@@ -148,9 +148,14 @@ std::string playerDetails(int id){
     if(p->injured)o<<"Травма: ещё "<<p->injured<<" дней\n";
     if(p->suspension)o<<"Дисквалификация: "<<p->suspension<<" матча\n";
     o<<"Голы / ассисты за сезон: "<<p->goals<<" / "<<p->assists<<"\n";
-    if(!p->sourceQid.empty())
-        o<<"РЕАЛЬНЫЙ ФУТБОЛИСТ: Wikidata "<<p->sourceQid
-         <<" | источник: Wikipedia/Wikidata (2026)\n";
+    if(!p->sourceQid.empty()){
+        if(p->sourceQid.rfind("WC:",0)==0)
+            o<<"РЕАЛЬНЫЙ ФУТБОЛИСТ: World Cup 2026 #"<<p->sourceQid.substr(3)
+             <<" | клуб указан на лето 2026 г.\n";
+        else
+            o<<"РЕАЛЬНЫЙ ФУТБОЛИСТ: Wikidata "<<p->sourceQid
+             <<" | состав из Википедии (2026)\n";
+    }
     else o<<"СГЕНЕРИРОВАННЫЙ ИГРОК (демо)\n";
     o<<"Навыки, трансферная стоимость и зарплата — игровые оценки, не данные FIFA/FM.\n";
     return o.str();
