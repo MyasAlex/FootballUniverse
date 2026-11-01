@@ -50,6 +50,9 @@ struct Match {
     int possessionH=50, onTargetH=0, onTargetA=0;
     int passesH=0, passesA=0, completedH=0, completedA=0;
     int foulsH=0, foulsA=0, cornersH=0, cornersA=0;
+    // Persistent possession state: both commentary and pitch use the same event.
+    bool possessionHome=true;
+    int ballCarrierId=-1, previousCarrierId=-1, attackPhase=0, lastAction=0;
     std::vector<MatchPlayerStat> playerStats;
 };
 struct CupCompetition {
