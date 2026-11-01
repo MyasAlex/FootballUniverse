@@ -1,12 +1,15 @@
 cmake_minimum_required(VERSION 3.20)
-project(FootballUniverse VERSION 0.12.1 LANGUAGES CXX)
+project(FootballUniverse VERSION 0.14.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Link the MSVC runtime statically so players do not need Visual C++ installed.
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    # Core, interface and test assertions must interpret Russian strings alike.
+    add_compile_options(/utf-8 /W4)
 endif()
-add_library(fu_core src/Game.cpp)
+add_library(fu_core src/Game.cpp src/Preparation.cpp src/TacticalModel.cpp
+    src/WorldMarket.cpp src/PlayerSearch.cpp src/CareerStorage.cpp)
 target_include_directories(fu_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
 if(WIN32)
     add_executable(FootballUniverse WIN32 src/WinMain.cpp)
@@ -14,16 +17,12 @@ if(WIN32)
     target_compile_definitions(FootballUniverse PRIVATE UNICODE _UNICODE NOMINMAX)
     add_custom_command(TARGET FootballUniverse POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:FootballUniverse>/data"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${CMAKE_CURRENT_SOURCE_DIR}/data/players.csv"
-            "$<TARGET_FILE_DIR:FootballUniverse>/data/players.csv"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/data"
+            "$<TARGET_FILE_DIR:FootballUniverse>/data"
         COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_SOURCE_DIR}/assets/clubs"
             "$<TARGET_FILE_DIR:FootballUniverse>/assets/clubs")
-    if(MSVC)
-        target_compile_options(FootballUniverse PRIVATE /utf-8 /W4)
-        target_compile_options(fu_core PRIVATE /utf-8 /W4)
-    endif()
 else()
     add_executable(fu_demo src/DemoMain.cpp)
     target_link_libraries(fu_demo PRIVATE fu_core)
@@ -83,16 +82,36 @@ target_link_libraries(fu_real_roster_tests PRIVATE fu_core)
 add_test(NAME real_wikidata_rosters_and_save COMMAND fu_real_roster_tests)
 set_tests_properties(real_wikidata_rosters_and_save PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
 
-add_executable(fu_real_database_tests tests/test_real_database.cpp)
-target_link_libraries(fu_real_database_tests PRIVATE fu_core)
-add_test(NAME bundled_real_player_values COMMAND fu_real_database_tests)
-set_tests_properties(bundled_real_player_values PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+add_executable(fu_preparation_tests tests/test_preparation.cpp)
+target_link_libraries(fu_preparation_tests PRIVATE fu_core)
+add_test(NAME match_preparation_and_plans COMMAND fu_preparation_tests)
+
+add_executable(fu_tactical_model_tests tests/test_tactical_model.cpp)
+target_link_libraries(fu_tactical_model_tests PRIVATE fu_core)
+add_test(NAME tactical_matchups_and_fatigue COMMAND fu_tactical_model_tests)
+
+add_executable(fu_world_market_tests tests/test_world_market.cpp)
+target_link_libraries(fu_world_market_tests PRIVATE fu_core)
+add_test(NAME world_market_and_squad_balance COMMAND fu_world_market_tests)
+
+add_executable(fu_player_search_tests tests/test_player_search.cpp)
+target_link_libraries(fu_player_search_tests PRIVATE fu_core)
+add_test(NAME player_search_filters_and_sorting COMMAND fu_player_search_tests)
+
+add_executable(fu_career_storage_tests tests/test_career_storage.cpp)
+target_link_libraries(fu_career_storage_tests PRIVATE fu_core)
+add_test(NAME safe_career_slots_and_backups COMMAND fu_career_storage_tests)
+
+add_executable(fu_transfer_history_tests tests/test_transfer_history.cpp)
+target_link_libraries(fu_transfer_history_tests PRIVATE fu_core)
+add_test(NAME transfer_history_and_old_save_migration COMMAND fu_transfer_history_tests)
 
 add_executable(fu_role_powers_tests tests/test_role_powers.cpp)
 target_link_libraries(fu_role_powers_tests PRIVATE fu_core)
-add_test(NAME five_career_roles_are_distinct COMMAND fu_role_powers_tests)
-set_tests_properties(five_career_roles_are_distinct PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+add_test(NAME distinct_career_permissions COMMAND fu_role_powers_tests)
+set_tests_properties(distinct_career_permissions PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")
 
-add_executable(fu_pitch_motion_tests tests/test_pitch_motion.cpp)
-target_link_libraries(fu_pitch_motion_tests PRIVATE fu_core)
-add_test(NAME no_abrupt_player_teleportation COMMAND fu_pitch_motion_tests)
+add_executable(fu_match_continuity_tests tests/test_match_continuity.cpp)
+target_link_libraries(fu_match_continuity_tests PRIVATE fu_core)
+add_test(NAME continuous_live_match_and_save COMMAND fu_match_continuity_tests)
+set_tests_properties(continuous_live_match_and_save PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests")

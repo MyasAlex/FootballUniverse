@@ -1,10 +1,10 @@
 #include "Game.hpp"
+#include "TacticalModel.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
-#include <limits>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -60,7 +60,7 @@ int playerRating(const Player& p){
 Game::Game():rng_(20261030U){ newCareer("Менеджер", 0, Role::Coach, Difficulty::Realistic,{0,1}); }
 int Game::random(int lo,int hi){return std::uniform_int_distribution<int>(lo,hi)(rng_);}
 void Game::seedWorld(){
-    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();cups_.clear();trophies_.clear();leagueHistory_.clear();movements_.clear();coaches_.clear();job_={};reputation_=55;archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;live_={};
+    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();cups_.clear();trophies_.clear();leagueHistory_.clear();movements_.clear();coaches_.clear();job_={};reputation_=55;archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();transferHistory_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;live_={};
     const std::vector<std::tuple<std::string,std::string,std::vector<std::string>>> definitions={
       {"Англия","Премьер-лига",{"Арсенал","Ливерпуль","Манчестер Сити","Челси","Манчестер Юнайтед","Тоттенхэм"}},
       {"Испания","Ла Лига",{"Реал Мадрид","Барселона","Атлетико","Атлетик Бильбао","Вильярреал","Реал Сосьедад"}},
@@ -323,8 +323,6 @@ PitchFrame Game::pitchFrame()const{
     // They are deterministic and never consume the match RNG (save/resume is stable).
     const auto groupPosition=[&](const std::vector<int>& ids,int team){
         const int side=team==0?1:-1;
-        // Stable shirt slot: a sending-off or substitution must NOT shift all
-        // teammates to another lane. Keep the full "ever played" order.
         const auto& original=hasLiveMatch()?
             (team==0?live_.usedHome:live_.usedAway):ids;
         const std::array<std::array<int,7>,4> lanes={{
@@ -346,8 +344,6 @@ PitchFrame Game::pitchFrame()const{
             }
             const int baseX=group==0?72:group==1?255:group==2?490:745;
             const int baseY=lanes[group][index%7];
-            // Smooth, bounded movement. Old modulo offsets jumped 60+ pixels
-            // when their counter wrapped, making players teleport.
             const double tick=double(frame.minute);
             const int motionX=int(std::lround(20.0*std::sin(tick*0.22+id*0.41+team)));
             const int motionY=int(std::lround(18.0*std::sin(tick*0.18+id*0.63+team*0.5)));
@@ -359,72 +355,45 @@ PitchFrame Game::pitchFrame()const{
     groupPosition(home,0);
     groupPosition(away,1);
     if(frame.actors.empty())return frame;
-    int carrier=-1,receiver=-1;
-    std::string event;
-    if(hasLiveMatch()){
-        for(auto it=live_.events.rbegin();it!=live_.events.rend();++it){
-            if(it->minute!=frame.minute)continue;
-            const auto& str=it->text;
-            if(str.find("ГОЛ!")!=std::string::npos||str.find("пробил.")!=std::string::npos||
-               str.find("комбинация")!=std::string::npos){
-                event=str;break;
-            }
-        }
-    }
-    // A possession is a multi-minute build-up progressing through the thirds.
-    // Previous implementation randomly selected a distant carrier EACH minute,
-    // making the ball appear at an unrelated location with no visible pass.
-    const int phase=frame.minute%10;
-    bool homePossesses=(frame.minute/10)%2==0;
-    if(!event.empty()){
-        if(event.rfind(clubs_[frame.homeClub].name+":",0)==0)homePossesses=true;
-        else if(event.rfind(clubs_[frame.awayClub].name+":",0)==0)homePossesses=false;
-    }
-    const int team=homePossesses?0:1;
-    std::vector<const PitchActor*> attack;
-    for(const auto& actor:frame.actors)if(actor.team==team)attack.push_back(&actor);
-    if(attack.empty())return frame;
-    const int targetX=homePossesses?200+phase*70:800-phase*70;
-    const int targetY=350+int(std::lround(115.0*std::sin(double(frame.minute)*0.32)));
-    auto nearTarget=[&](int x,int y)->const PitchActor*{
-        const PitchActor* result=attack.front();
-        int closest=std::numeric_limits<int>::max();
-        for(const auto* actor:attack){
-            const int dx=actor->x-x,dy=actor->y-y;
-            const int distance=dx*dx+(dy*dy)/2;
-            if(distance<closest){closest=distance;result=actor;}
-        }
-        return result;
+    const auto actorFor=[&](int id)->const PitchActor*{
+        for(const auto& actor:frame.actors)if(actor.playerId==id)return &actor;
+        return nullptr;
     };
-    const PitchActor* owner=nearTarget(targetX,targetY);
-    const PitchActor* provider=nullptr;
-    if(!event.empty()){
-        for(const auto* actor:attack){
-            const Player* player=findPlayer(actor->playerId);
-            if(!player)continue;
-            const size_t pos=event.find(player->name);
-            if(pos==std::string::npos)continue;
-            if(event.find("пробил.")!=std::string::npos&&
-               event.find(player->name+" пробил.")!=std::string::npos)
-                owner=actor;
-            else if(!provider)provider=actor;
+    if(hasLiveMatch()){
+        const PitchActor* receiver=actorFor(live_.ballCarrierId);
+        const PitchActor* passer=actorFor(live_.previousCarrierId);
+        const PitchActor* shotTaker=actorFor(live_.previousCarrierId);
+        if(live_.lastAction>=2&&shotTaker){
+            frame.carrierId=shotTaker->playerId;
+            frame.ballFromX=shotTaker->x;frame.ballFromY=shotTaker->y;
+            frame.ballX=shotTaker->team==0?960:40;
+            frame.ballY=350+(shotTaker->y-350)/4;
+            frame.action=live_.lastAction;
+        }else if(receiver){
+            frame.carrierId=receiver->playerId;
+            frame.ballX=receiver->x;frame.ballY=receiver->y;
+            frame.ballFromX=passer?passer->x:receiver->x;
+            frame.ballFromY=passer?passer->y:receiver->y;
+            frame.receiverId=passer&&passer!=receiver?receiver->playerId:-1;
+            frame.action=passer&&passer!=receiver?1:0;
+        }
+        if(frame.carrierId>=0){
+            for(auto it=live_.events.rbegin();it!=live_.events.rend();++it){
+                if(it->minute!=frame.minute)break;
+                if(it->text.find("пробил.")!=std::string::npos||
+                   it->text.find("передал мяч")!=std::string::npos||
+                   it->text.find("перехватил мяч")!=std::string::npos){
+                    frame.highlight=it->text;break;
+                }
+            }
+            return frame;
         }
     }
-    if(provider&&provider!=owner)frame.receiverId=owner->playerId;
-    frame.carrierId=owner->playerId;
-    frame.ballFromX=provider&&provider!=owner?provider->x:owner->x;
-    frame.ballFromY=provider&&provider!=owner?provider->y:owner->y;
-    frame.ballX=owner->x;
-    frame.ballY=owner->y;
-    frame.highlight=event;
-    if(event.find("ГОЛ!")!=std::string::npos){
-        frame.action=3;frame.ballX=homePossesses?965:35;frame.ballY=350;
-    }else if(event.find("пробил.")!=std::string::npos){
-        frame.action=2;frame.ballX=homePossesses?920:80;
-        frame.ballY=350+(owner->y-350)/3;
-    }else{
-        frame.action=1; // Nearby recipient or dribble along the attacking phase.
-    }
+    // Preview of the fixture, when no simulation is running.
+    const PitchActor& kickoff=frame.actors.front();
+    frame.carrierId=kickoff.playerId;
+    frame.ballX=frame.ballFromX=kickoff.x;
+    frame.ballY=frame.ballFromY=kickoff.y;
     return frame;
 }
 void Game::initializeLineups(LiveMatch& live,const Match& match)const{
@@ -508,6 +477,9 @@ std::string Game::substitute(int playerOutId,int playerInId){
     if((incoming->position=="GK")!=(outgoing->position=="GK"))
         return status_="Вратаря можно заменить только другим вратарём.";
     *old=playerInId;used.push_back(playerInId);++subs;
+    if(live_.ballCarrierId==playerOutId)live_.ballCarrierId=playerInId;
+    // Old passes may still be part of the commentary. The graphical trace
+    // simply falls back to the current player after an on-ball substitution.
     live_.playerStats.push_back({playerInId});
     live_.events.push_back({live_.minute,"ЗАМЕНА: "+outgoing->name+" → "+incoming->name+" ("+myClub().name+")"});
     return status_="Замена выполнена: "+incoming->name+" вместо "+outgoing->name+". Осталось "+std::to_string(5-subs)+" замен.";
@@ -1405,7 +1377,42 @@ std::string Game::homeText()const{
     o<<"КЛУБ: "<<myClub().name<<"\n";
     o<<"Менеджер: "<<manager_<<" | репутация "<<reputation_<<"/100\n";
     o<<"Дивизион: "<<leagues_[myClub().league].name<<" ("<<leagues_[myClub().league].country<<")\n";
-    o<<"Роль: "<<(role_==Role::Coach?"Главный тренер":role_==Role::Director?"Спортивный директор":role_==Role::Owner?"Владелец":role_==Role::President?"Президент":"Песочница")<<"\n";    o<<"\n"<<roleOverview()<<"\n";
+    o<<"Роль: "<<(role_==Role::Coach?"Главный тренер":role_==Role::Director?"Спортивный директор":role_==Role::Owner?"Владелец":role_==Role::President?"Президент":"Песочница")<<"\n";
+    o<<"\nВАША ДОЛЖНОСТЬ И ЗАДАЧИ\n"<<roleOverview();
+    o<<"\nРАБОЧИЕ ПРИОРИТЕТЫ\n";
+    switch(role_){
+    case Role::Coach:{
+        int tired=0,injured=0;
+        for(const auto& p:players_)if(p.club==teamId_){
+            if(p.fitness<65)++tired;
+            if(p.injured>0)++injured;
+        }
+        o<<"Травмы: "<<injured<<" | Низкая форма: "<<tired<<"\n"
+         <<"Следующее решение: состав, подготовка и выбранная тактика.\n";
+        break;
+    }
+    case Role::Director:{
+        int expiring=0,active=0;
+        for(const auto& p:players_)if(p.club==teamId_&&p.contractYear<=season_+1)++expiring;
+        for(const auto& deal:deals_)if(int(deal.stage)<=4)++active;
+        o<<"Контракты к продлению: "<<expiring<<" | Переговоры: "<<active<<"\n"
+         <<"Следующее решение: трансферы, скауты и работа академии.\n";
+        break;
+    }
+    case Role::Owner:
+        o<<"Капитал: "<<money(myClub().budget)<<" | База: "<<myClub().facilities<<"/10"
+         <<" | Академия: "<<myClub().academy<<"/10\n"
+         <<"Следующее решение: крупные инфраструктурные вложения.\n";
+        break;
+    case Role::President:
+        o<<"Поддержка фанатов: "<<myClub().fans<<"/100 | Спонсор: "
+         <<money(myClub().sponsorship)<<" за домашний матч\n"
+         <<"Следующее решение: билеты, спонсоры, болельщики и персонал.\n";
+        break;
+    case Role::Sandbox:
+        o<<"Доступны все рабочие направления клуба.\n";break;
+    }
+    o<<"\n";
     o<<"Сложность: "<<(difficulty_==Difficulty::Easy?"Лёгкая":difficulty_==Difficulty::Realistic?"Реализм":difficulty_==Difficulty::Hard?"Сложная":"Свободная песочница")<<"\n\n";
     o<<"Бюджет: "<<money(myClub().budget)<<"\n";
     int liveDeals=0;for(const auto& d:deals_)if(int(d.stage)<=4)++liveDeals;
@@ -1413,12 +1420,26 @@ std::string Game::homeText()const{
     o<<"Доверие фанатов: "<<pct(myClub().fans)<<"\n";
     o<<"Доверие руководства: "<<pct(myClub().board)<<"\n";
     o<<"Подготовка команды: "<<tactics[myClub().tactic]<<" / "<<formations[myClub().formation]<<"\n\n";
+    o<<"Форма последних пяти матчей: "<<clubForm(teamId_)<<"\n\n";
     if(auto m=upcomingMatch()){
         o<<"СЛЕДУЮЩИЙ МАТЧ\n";
         o<<matchLabel(*m)<<"\n";
         o<<clubs_[m->home].name<<" — "<<clubs_[m->away].name<<"\n";
         o<<"Через дней: "<<std::max(0,m->day-day_)<<"\n\n";
+        const int opponent=m->home==teamId_?m->away:m->home;
+        o<<"Форма соперника: "<<clubForm(opponent)<<"\n";
     }
+    int available=0,unavailable=0,tired=0,fitness=0;
+    for(int id:starters(teamId_))if(const auto* p=findPlayer(id)){
+        if(p->injured||p->suspension){++unavailable;continue;}
+        ++available;fitness+=p->fitness;if(p->fitness<70)++tired;
+    }
+    o<<"ГОТОВНОСТЬ К МАТЧУ\nДоступны в основе: "<<available<<"/11";
+    if(available)o<<" | свежесть: "<<fitness/available<<"/100";
+    o<<"\n";
+    if(available<11||unavailable)o<<"Нужен пересмотр основы: «Состав» → «Автосостав».\n";
+    if(tired)o<<"Уставших в основе: "<<tired<<". Проверьте запас и интенсивность игры.\n";
+    o<<"«Подготовка» — разбор соперника и выбор плана; затем «Матч».\n\n";
     o<<"НОВОСТИ И СООБЩЕНИЯ\n";
     for(int i=int(inbox_.size())-1,n=0;i>=0&&n<4;--i,++n)o<<" • "<<inbox_[i].title<<"\n";
     return o.str();
@@ -1491,7 +1512,7 @@ std::string Game::newsText()const{
     return o.str();
 }
 std::string Game::helpText()const{
-    return "FOOTBALL UNIVERSE 0.10 / ПРОТОТИП\n\n"
+    return "FOOTBALL UNIVERSE 0.14 / ПРОТОТИП\n\n"
     "Это самостоятельная C++-игра с текстовым и 2D-отображением матча.\n"
     "Календарь и кубки: вкладка «Архив» показывает матчи, сетку кубков и историю чемпионов.\n"
     "В шести странах: национальные кубки из 6 клубов, один международный кубок из 8.\n"
@@ -1570,6 +1591,7 @@ void Game::dailyTick(){
     pruneRelationships();
     processTransferNegotiations();
     processDeferredPayments();
+    processAITransferMarket();
     for(auto& report:scouts_)if(report.days<5){
         ++report.days;
         if(report.days==5){
@@ -1757,66 +1779,114 @@ void Game::playMinute(LiveMatch& live,bool detailed){
     for(int id:live.awayXI)if(auto* st=statFor(live,id))++st->minutes;
     const int strengthH=lineupStrength(live.homeXI);
     const int strengthA=lineupStrength(live.awayXI);
+    auto averageFitness=[this](const std::vector<int>& xi){
+        int sum=0,count=0;
+        for(int id:xi)if(const auto* p=findPlayer(id)){sum+=p->fitness;++count;}
+        return count?sum/count:0;
+    };
+    const auto homePlan=evaluateTactics(h,a,averageFitness(live.homeXI));
+    const auto awayPlan=evaluateTactics(a,h,averageFitness(live.awayXI));
     const int initiative=std::clamp(52+(strengthH-strengthA)*2+
-        (h.tactic-a.tactic)*2+(h.pressing-a.pressing)*3+
-        (h.tempo-a.tempo),17,83);
-    const bool home=random(1,100)<=initiative;
+        homePlan.possession-awayPlan.possession,17,83);
+    // A possession survives minute boundaries. Only a turnover, a shot or
+    // a restart transfers the ball to the other team.
+    if(live.ballCarrierId<0){
+        live.possessionHome=random(1,100)<=initiative;
+        live.attackPhase=0;
+    }
+    const bool home=live.possessionHome;
     if(home)++live.possessionTicksH;
     const int attackingId=home?m.home:m.away;
     const Club& attacking=clubs_[attackingId];
     const Club& defending=clubs_[home?m.away:m.home];
+    const auto& plan=home?homePlan:awayPlan;
     const auto& teamXI=home?live.homeXI:live.awayXI;
     const auto& defenceXI=home?live.awayXI:live.homeXI;
-    if(teamXI.empty())return;
+    if(teamXI.empty()||defenceXI.empty())return;
+    auto goalkeeper=[&](const std::vector<int>& ids)->int{
+        for(int id:ids)if(const Player* p=findPlayer(id);p&&p->position=="GK")return id;
+        return ids.empty()?-1:ids.front();
+    };
     auto takePlayer=[&](const std::vector<int>& team,bool skipGK)->const Player*{
         std::vector<const Player*> available;
         for(int id:team)if(const Player* p=findPlayer(id);p&&(!skipGK||p->position!="GK"))
             available.push_back(p);
         return available.empty()?nullptr:available[random(0,int(available.size()-1))];
     };
-    // Every minute accounts for team possession, pass attempts and defensive challenges.
-    const int touches=std::clamp(3+(1-attacking.tempo)+random(0,3),2,8);
+    if(std::find(teamXI.begin(),teamXI.end(),live.ballCarrierId)==teamXI.end()){
+        live.ballCarrierId=goalkeeper(teamXI);
+        live.previousCarrierId=-1;
+    }
+    if(live.minute==1&&detailed)
+        live.events.push_back({live.minute,attacking.name+
+            ": вратарь начинает атаку от своих ворот."});
+
+    // Consecutive passing decisions. The receiver in one pass MUST be the
+    // passer in the next one, and passes advance through adjacent thirds.
+    const int touches=std::clamp(2+(attacking.tempo==2?1:0)+random(0,1),2,4);
+    bool lost=false;
     for(int i=0;i<touches;++i){
-        const Player* passer=takePlayer(teamXI,false);
+        const Player* passer=findPlayer(live.ballCarrierId);
         if(!passer)break;
-        const int accuracy=std::clamp(58+passer->skill[2]/3+
-             (1-attacking.tempo)*5-(defending.pressing-1)*5,35,97);
+        int desired=std::clamp(live.attackPhase+1,1,3);
+        std::vector<int> candidates;
+        for(int id:teamXI)if(id!=passer->id){
+            const Player* p=findPlayer(id);
+            if(p&&positionGroup(p->position)==desired)candidates.push_back(id);
+        }
+        if(candidates.empty())for(int id:teamXI)if(id!=passer->id){
+            const Player* p=findPlayer(id);
+            if(p&&p->position!="GK")candidates.push_back(id);
+        }
+        if(candidates.empty())break;
+        const int receiverId=candidates[random(0,int(candidates.size()-1))];
+        const Player* receiver=findPlayer(receiverId);
+        if(!receiver)break;
+        const int accuracy=std::clamp(62+passer->skill[2]/3+plan.accuracy,40,96);
         const bool completed=random(1,100)<=accuracy;
         if(auto* st=statFor(live,passer->id)){
             ++st->passes;if(completed)++st->completedPasses;
         }
-        int& attempts=home?live.passesH:live.passesA;
-        int& successful=home?live.completedH:live.completedA;
-        ++attempts;if(completed)++successful;
-        if(!completed&&random(1,5)==1){
-            if(const Player* defender=takePlayer(defenceXI,false)){
-                if(auto* st=statFor(live,defender->id))++st->tackles;
-            }
+        ++(home?live.passesH:live.passesA);
+        if(completed)++(home?live.completedH:live.completedA);
+        live.previousCarrierId=passer->id;
+        live.lastAction=1;
+        if(completed){
+            live.ballCarrierId=receiverId;
+            live.attackPhase=std::max(live.attackPhase,positionGroup(receiver->position));
+            if(detailed)live.events.push_back({live.minute,attacking.name+": "+
+                passer->name+" передал мяч "+receiver->name+
+                (live.attackPhase>=3?" у штрафной.":live.attackPhase==2?
+                 " в центре поля.":" в своей трети.")});
+        }else{
+            const Player* interceptor=takePlayer(defenceXI,false);
+            const int winningId=interceptor?interceptor->id:goalkeeper(defenceXI);
+            if(interceptor)if(auto* st=statFor(live,interceptor->id))++st->tackles;
+            if(detailed)live.events.push_back({live.minute,attacking.name+": "+
+                passer->name+" пытался отдать пас "+receiver->name+
+                ", но "+(interceptor?interceptor->name:std::string("соперник"))+
+                " перехватил мяч. "+defending.name+" начинает новую атаку."});
+            live.ballCarrierId=winningId;
+            live.possessionHome=!home;
+            live.attackPhase=0;
+            lost=true;
+            break;
         }
     }
-    const int urgency=attacking.tactic==2?4:attacking.tactic==3?3:
-                      attacking.tactic==0?-5:0;
-    const int shotThreshold=std::clamp(17+urgency+
-         (attacking.tempo-1)*4+(attacking.width-1)*2+
-         (strengthH-strengthA)*(home?1:-1)/5,8,35);
-    if(random(1,100)<=shotThreshold){
-        std::vector<const Player*> weighted;
-        for(int id:teamXI)if(const Player* p=findPlayer(id);p&&p->position!="GK"&&p->injured==0){
-            const int count=std::max(1,(positionGroup(p->position)==3?7:
-                           positionGroup(p->position)==2?4:1)+p->skill[1]/15);
-            for(int j=0;j<count;++j)weighted.push_back(p);
-        }
-        if(!weighted.empty()){
-            const Player* scorer=weighted[random(0,int(weighted.size()-1))];
-            const Player* provider=takePlayer(teamXI,true);
-            for(int j=0;j<4&&provider&&provider->id==scorer->id;++j)
-                provider=takePlayer(teamXI,true);
-            if(provider&&provider->id==scorer->id)provider=nullptr;
+    const int shotThreshold=std::clamp(20+plan.shots+
+        (strengthH-strengthA)*(home?1:-1)/5,8,40);
+    // A shot cannot occur until the ball has physically reached a forward.
+    if(!lost&&live.attackPhase>=3&&random(1,100)<=shotThreshold){
+        const Player* scorer=findPlayer(live.ballCarrierId);
+        if(scorer&&scorer->position!="GK"){
+            const Player* provider=findPlayer(live.previousCarrierId);
+            if(provider&&(provider->club!=attackingId||provider->id==scorer->id))
+                provider=nullptr;
             const int quality=std::clamp(13+(scorer->skill[1]-55)/3+
                 (scorer->skill[4]-55)/8+
                 (provider?(provider->skill[2]-50)/15:0)+
                 (strengthH-strengthA)*(home?1:-1)/6+
-                (attacking.tactic==2?3:0)+(defending.tactic==0?-3:0),5,46);
+                plan.quality,5,46);
             const bool goal=random(1,100)<=quality;
             const bool onTarget=goal||random(1,100)<=std::clamp(40+scorer->skill[1]/3,40,83);
             if(home){
@@ -1832,12 +1902,8 @@ void Game::playMinute(LiveMatch& live,bool detailed){
                 ++st->shots;if(onTarget)++st->onTarget;
                 if(goal)++st->goals;
             }
-            if(onTarget&&!goal){
-                for(int id:defenceXI)if(const Player* keeper=findPlayer(id);keeper&&keeper->position=="GK"){
-                    if(auto* st=statFor(live,id))++st->saves;
-                    break;
-                }
-            }
+            if(onTarget&&!goal)
+                if(auto* st=statFor(live,goalkeeper(defenceXI)))++st->saves;
             if(goal){
                 for(auto& p:players_)if(p.id==scorer->id){++p.goals;break;}
                 if(provider){
@@ -1848,18 +1914,20 @@ void Game::playMinute(LiveMatch& live,bool detailed){
                 ++(home?live.cornersH:live.cornersA);
             }
             if(detailed||goal){
-                const std::string from=provider?provider->name+" отдал передачу, ":"";
-                const std::string result=goal?"ГОЛ!":
-                                         onTarget?"Удар в створ — вратарь спас!":"Удар мимо!";
+                const std::string from=provider?provider->name+" сделал последний пас. ":"";
+                const std::string result=goal?"ГОЛ!":onTarget?
+                    "Удар в створ — вратарь спас!":"Удар мимо!";
                 live.events.push_back({live.minute,attacking.name+": "+from+
-                     scorer->name+" пробил. "+result+
-                     (goal?" Счёт "+std::to_string(live.goalsH)+":"+
+                    scorer->name+" пробил. "+result+
+                    (goal?" Счёт "+std::to_string(live.goalsH)+":"+
                            std::to_string(live.goalsA)+".":"")});
             }
+            live.previousCarrierId=scorer->id;
+            live.lastAction=goal?3:2;
+            live.possessionHome=!home;
+            live.ballCarrierId=goalkeeper(defenceXI);
+            live.attackPhase=0;
         }
-    }else if(detailed&&random(1,100)<=9){
-        live.events.push_back({live.minute,attacking.name+
-           ": комбинация в центре поля, соперник перестраивает оборону."});
     }
     // Fouls, cautions and injuries are generated independently of shots.
     if(random(1,100)<=4+attacking.pressing){
@@ -1898,6 +1966,19 @@ void Game::playMinute(LiveMatch& live,bool detailed){
             }
         }
     }
+    // Charge each player's actual minutes, so a late substitute does not pay
+    // for time spent on the bench. Both minutes and fitness persist in saves.
+    auto fatigue=[this,&live](const std::vector<int>& xi,const Club& club){
+        for(int id:xi){
+            const auto* stat=statFor(live,id);
+            if(!stat||stat->minutes<=0||stat->minutes%15!=0)continue;
+            for(auto& p:players_)if(p.id==id){
+                p.fitness=clamp(p.fitness-matchFatigueCost(club,p.skill[7]));
+                break;
+            }
+        }
+    };
+    fatigue(live.homeXI,h);fatigue(live.awayXI,a);
 }
 void Game::finishMatch(LiveMatch& live){
     Match& m=matches_.at(live.id);
@@ -2259,45 +2340,34 @@ void Game::changeTraining(){
     myClub().training=(myClub().training+1)%int(trainings.size());
     status_="Новый план тренировок: "+trainings[myClub().training];
 }
-bool Game::permissionSports()const{
-    return canTransfer();
+bool Game::canCoach()const{
+    return difficulty_==Difficulty::Free||role_==Role::Coach||role_==Role::Sandbox;
 }
-bool Game::permissionCoaching()const{
-    return canCoach();
+bool Game::canTransfer()const{
+    return difficulty_==Difficulty::Free||role_==Role::Coach||role_==Role::Director||role_==Role::Sandbox;
 }
-bool Game::permissionBusiness()const{
-    return canInvest()||canCommercial();
+bool Game::canInvest()const{
+    return difficulty_==Difficulty::Free||role_==Role::Owner||role_==Role::Sandbox;
 }
+bool Game::canCommercial()const{
+    return difficulty_==Difficulty::Free||role_==Role::President||role_==Role::Sandbox;
+}
+bool Game::permissionCoaching()const{return canCoach();}
+bool Game::permissionSports()const{return canTransfer();}
+bool Game::permissionBusiness()const{return canInvest()||canCommercial();}
 std::string Game::roleOverview()const{
     switch(role_){
-    case Role::Coach:
-        return "ГЛАВНЫЙ ТРЕНЕР\n"
-               "ВАША РАБОТА: состав, схема, тактика, замены, тренировки, разговоры с игроками.\n"
-               "ДОПОЛНИТЕЛЬНО: можете предлагать трансферы и просматривать скаутские отчёты.\n"
-               "НЕЛЬЗЯ: утверждать стадионные инвестиции, менять цены на билеты и спонсоров.\n"
-               "ЦЕЛЬ: результаты матчей, развитие игроков и карьера тренера.\n";
-    case Role::Director:
-        return "СПОРТИВНЫЙ ДИРЕКТОР\n"
-               "ВАША РАБОТА: покупки, продажи, аренды, контракты, поиск игроков, академия и персонал.\n"
-               "НЕЛЬЗЯ: выбирать стартовый состав, менять тактику, тренировки и делать замены.\n"
-               "Матчи можно смотреть или симулировать, но решения на поле принимает тренер.\n";
-    case Role::Owner:
-        return "ВЛАДЕЛЕЦ КЛУБА\n"
-               "ВАША РАБОТА: вложения в стадион, тренировочную базу и академию, крупные расходы.\n"
-               "НЕЛЬЗЯ: руководить составом, вести трансферы, менять тактику, устанавливать билеты.\n"
-               "Матчи доступны для просмотра, а повседневной работой занимается руководство.\n";
-    case Role::President:
-        return "ПРЕЗИДЕНТ КЛУБА\n"
-               "ВАША РАБОТА: спонсоры, цены на билеты, отношения с болельщиками, персонал.\n"
-               "НЕЛЬЗЯ: тренировать состав, оформлять трансферы и утверждать инвестиции владельца.\n"
-               "ЦЕЛЬ: доходы, популярность клуба и стабильность управления.\n";
-    case Role::Sandbox:
-        return "ПЕСОЧНИЦА / ВСЕ ПОЛНОМОЧИЯ\n"
-               "Можете управлять составом и тактикой, вести трансферы и контракты,\n"
-               "инвестировать в инфраструктуру, искать спонсоров, менять билеты.\n"
-               "Это единственный режим, где ограничения по полномочиям отключены.\n";
+    case Role::Coach:return "ГЛАВНЫЙ ТРЕНЕР: состав, тактика, тренировки, замены, разговоры. "
+                              "Трансферы доступны в рамках спортивной работы.\n";
+    case Role::Director:return "СПОРТИВНЫЙ ДИРЕКТОР: скаутинг, контракты, трансферы, академия и штаб. "
+                                 "Состав и тактику определяет тренер.\n";
+    case Role::Owner:return "ВЛАДЕЛЕЦ: инвестиции в стадион, инфраструктуру и академию. "
+                              "Ежедневный спорт и коммерция делегированы руководителям.\n";
+    case Role::President:return "ПРЕЗИДЕНТ: спонсоры, билеты, болельщики, административный штаб. "
+                                  "Не определяет тактику и трансферные сделки.\n";
+    case Role::Sandbox:return "ПЕСОЧНИЦА: открыты все управленческие полномочия.\n";
     }
-    return "";
+    return {};
 }
 bool Game::canFinance(int amount){
     if(difficulty_==Difficulty::Free)return true;
@@ -2533,6 +2603,7 @@ void Game::finalizeTransfer(TransferDeal& d){
         player->morale=clamp(player->morale+3);
         d.stage=DealStage::Completed;
         autoAssignCaptains();pickLineup(previousClub);pickLineup(teamId_);
+        recordTransfer(player->id,previousClub,teamId_,d.fee,1);
         addMessage("Аренда подтверждена",player->name+" переходит в "+buyer.name+
                    " на "+std::to_string(d.loanDays)+" дней, оплата "+
                    std::to_string(d.loanWageShare)+"% зарплаты и "+money(d.fee)+".");
@@ -2578,6 +2649,7 @@ void Game::finalizeTransfer(TransferDeal& d){
         }
         exchanged->club=previousClub;exchanged->starter=false;exchanged->sellOnClub=-1;
         exchanged->sellOnPct=0;exchanged->releaseClause=0;exchanged->morale=clamp(exchanged->morale-2);
+        recordTransfer(exchanged->id,teamId_,previousClub,exchangeValue);
     }
     player->club=teamId_;player->starter=false;player->wage=d.wage;
     player->contractYear=season_+d.years;
@@ -2587,6 +2659,7 @@ void Game::finalizeTransfer(TransferDeal& d){
     player->trust=clamp(player->trust+6);player->loyalty=clamp(player->loyalty+3);
     d.stage=DealStage::Completed;
     autoAssignCaptains();pickLineup(previousClub);pickLineup(teamId_);
+    recordTransfer(player->id,previousClub,teamId_,d.fee);
     addMessage("Трансфер завершён",player->name+" перешёл в "+buyer.name+" из "+seller.name+
                " за "+money(d.fee)+" ("+std::to_string(d.installments)+
                " платежей). Зарплата "+money(d.wage)+" в неделю."+
@@ -2618,6 +2691,7 @@ void Game::processLoanReturns(){
     for(auto& p:players_)if(p.parentClub>=0&&p.loanReturnDay>=0&&totalDays_>=p.loanReturnDay){
         const int from=p.club,to=p.parentClub;
         p.club=to;p.parentClub=-1;p.loanReturnDay=-1;p.loanWageShare=100;p.starter=false;
+        recordTransfer(p.id,from,to,0,2);
         changed=true;
         if(from==teamId_||to==teamId_)
             addMessage("Завершена аренда",p.name+" возвращается в "+
@@ -2664,6 +2738,7 @@ std::string Game::sellPlayer(int playerId,int buyerClub,int amount){
     const std::string name=p->name;
     p->club=buyerClub;p->starter=false;p->releaseClause=0;
     p->sellOnClub=-1;p->sellOnPct=0;p->morale=clamp(p->morale+2);
+    recordTransfer(p->id,teamId_,buyerClub,amount);
     for(auto& d:deals_)if(d.playerId==playerId&&int(d.stage)<=4)d.stage=DealStage::Cancelled;
     autoAssignCaptains();pickLineup(teamId_);pickLineup(buyerClub);
     addMessage("Игрок продан",name+" перешёл в "+buyer.name+" за "+money(amount)+".");
@@ -2682,7 +2757,8 @@ void Game::processTransferNegotiations(){
             continue;
         }
         // Competition is simulated only for offers with an interested rival.
-        if(d.rivalClub>=0&&totalDays_-d.submittedDay>=8&&random(1,25)==1){
+        if(d.kind==0&&d.rivalClub>=0&&totalDays_-d.submittedDay>=8&&random(1,25)==1&&
+           executeAITransfer(d.playerId,d.rivalClub,d.askingFee,true)){
             d.stage=DealStage::RivalSigned;
             addMessage("Конкурент перехватил игрока",p->name+" предпочёл предложение "+
                        clubs_[d.rivalClub].name+". Ваши переговоры завершены.");
@@ -2759,7 +2835,7 @@ bool anyWords(const std::string&s, std::initializer_list<std::string_view> words
 }
 }
 std::string Game::talk(int playerId,const std::string& phrase){
-    if(!permissionCoaching())return status_="Только главный тренер управляет индивидуальными разговорами с футболистами.";
+    if(!canCoach())return status_="Личные тренерские разговоры ведёт главный тренер.";
     Player* p=nullptr;for(auto& v:players_)if(v.id==playerId)p=&v;
     if(!p||p->club!=teamId_){status_="Для разговора выберите футболиста клуба.";return status_;}
     if(phrase.empty()){status_="Введите своё сообщение футболисту.";return status_;}
@@ -2794,7 +2870,7 @@ std::string Game::talk(int playerId,const std::string& phrase){
     return status_;
 }
 std::string Game::speakToFans(const std::string& phrase){
-    if(!canCommercial())return status_="Официальные обращения к болельщикам готовит президент клуба.";
+    if(!canCommercial())return status_="Обращения к болельщикам ведёт президент клуба.";
     if(phrase.empty()){status_="Введите обращение к болельщикам.";return status_;}
     std::string t=lowerForSearch(phrase),reaction;
     if(anyWords(t,{"спасибо","поддерж","уваж","вместе"})){
@@ -2813,7 +2889,7 @@ std::string Game::speakToFans(const std::string& phrase){
     return status_;
 }
 std::string Game::spendMoney(const std::string& project){
-    if(!canInvest()){status_="Инфраструктуру и крупные вложения утверждает владелец клуба.";return status_;}
+    if(!canInvest()){status_="Инвестиции утверждает владелец клуба.";return status_;}
     int cost=0;
     if(project=="stadium"){cost=3000000;if(myClub().stadium>140000){status_="Максимальная вместимость достигнута.";return status_;}}
     if(project=="training"){cost=2000000;if(myClub().facilities>=10){status_="База полностью модернизирована.";return status_;}}
@@ -2838,7 +2914,7 @@ std::string Game::recruitYouth(){
     return signYouthProspect(bestId);
 }
 std::string Game::negotiateSponsor(){
-    if(!canCommercial()){status_="Спонсорскими договорами занимается президент клуба.";return status_;}
+    if(!canCommercial()){status_="Спонсорские переговоры проводит президент.";return status_;}
     int roll=random(1,100);
     if(roll<40){status_="Новый спонсор отказал, переговоры не дали результата.";}
     else{int bonus=25000+random(0,myClub().prestige*4000);myClub().sponsorship+=bonus;
@@ -2847,7 +2923,7 @@ std::string Game::negotiateSponsor(){
     return status_;
 }
 std::string Game::adjustTickets(int change){
-    if(!canCommercial()){status_="Цены на билеты определяет президент клуба.";return status_;}
+    if(!canCommercial()){status_="Цены на билеты утверждает президент.";return status_;}
     myClub().ticket=std::clamp(myClub().ticket+change,5,250);
     myClub().fans=clamp(myClub().fans+(change<0?2:-2));
     status_="Цена билета: "+std::to_string(myClub().ticket)+" €. Отношение болельщиков изменилось.";
@@ -2866,7 +2942,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_12\n";
+    f<<"FUSAVE_14\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -2930,6 +3006,8 @@ std::string Game::save(const std::string& path)const{
     f<<live_.possessionTicksH<<' '<<live_.onTargetH<<' '<<live_.onTargetA<<' '
      <<live_.passesH<<' '<<live_.passesA<<' '<<live_.completedH<<' '<<live_.completedA<<' '
      <<live_.foulsH<<' '<<live_.foulsA<<' '<<live_.cornersH<<' '<<live_.cornersA<<'\n';
+    f<<live_.possessionHome<<' '<<live_.ballCarrierId<<' '<<live_.previousCarrierId
+     <<' '<<live_.attackPhase<<' '<<live_.lastAction<<'\n';
     writeStats(live_.playerStats);
     f<<lastTeamTalkDay_<<' '<<scouts_.size()<<'\n';
     for(const auto& r:scouts_)f<<r.playerId<<' '<<r.days<<' '<<r.ability<<' '<<r.potential<<' '<<r.shortlisted<<'\n';
@@ -2984,22 +3062,31 @@ std::string Game::save(const std::string& path)const{
     f<<reputation_<<' '<<job_.clubId<<' '<<job_.submittedDay
      <<' '<<job_.responseDay<<' '<<job_.expiresDay
      <<' '<<job_.stage<<' '<<job_.proposedSalary<<'\n';
+    f<<transferHistory_.size()<<'\n';
+    for(const auto& transfer:transferHistory_){
+        f<<transfer.season<<' '<<transfer.day<<' '<<transfer.totalDay<<' '
+         <<transfer.playerId<<' '<<transfer.fromClub<<' '<<transfer.toClub<<' '
+         <<transfer.fee<<' '<<transfer.kind<<'\n';
+        putString(f,transfer.playerName);
+    }
     return f.good()?"Карьера сохранена: "+path:"Ошибка записи сохранения";
 }
 std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12"&&header!="FUSAVE_13"&&header!="FUSAVE_14")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version5=(header=="FUSAVE_5"||header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
-    const bool version6=(header=="FUSAVE_6"||header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
-    const bool version7=(header=="FUSAVE_7"||header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
-    const bool version8=(header=="FUSAVE_8"||header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
-    const bool version9=(header=="FUSAVE_9"||header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
-    const bool version10=(header=="FUSAVE_10"||header=="FUSAVE_11"||header=="FUSAVE_12");
-    const bool version11=(header=="FUSAVE_11"||header=="FUSAVE_12");
-    const bool version12=(header=="FUSAVE_12");
+    const bool version14=(header=="FUSAVE_14");
+    const bool version13=(header=="FUSAVE_13"||version14);
+    const bool version12=(header=="FUSAVE_12"||version13);
+    const bool version11=(header=="FUSAVE_11"||version12);
+    const bool version10=(header=="FUSAVE_10"||version11);
+    const bool version9=(header=="FUSAVE_9"||version10);
+    const bool version8=(header=="FUSAVE_8"||version9);
+    const bool version7=(header=="FUSAVE_7"||version8);
+    const bool version6=(header=="FUSAVE_6"||version7);
+    const bool version5=(header=="FUSAVE_5"||version6);
     Game loaded;
     if(!getString(f,loaded.manager_)||!getString(f,loaded.status_))return "Повреждённое сохранение";
     int role=0,diff=0;
@@ -3176,6 +3263,36 @@ std::string Game::load(const std::string& path){
                    live.foulsH<0||live.foulsA<0||
                    live.cornersH<0||live.cornersA<0)
                     throw std::runtime_error("Промежуточные показатели матча");
+                if(version14){
+                    if(!(f>>live.possessionHome>>live.ballCarrierId>>
+                         live.previousCarrierId>>live.attackPhase>>live.lastAction)||
+                       live.attackPhase<0||live.attackPhase>3||
+                       live.lastAction<0||live.lastAction>3)
+                        throw std::runtime_error("Состояние владения мячом");
+                    const auto onField=[&](int id){
+                        return id==-1||
+                            std::find(live.homeXI.begin(),live.homeXI.end(),id)!=live.homeXI.end()||
+                            std::find(live.awayXI.begin(),live.awayXI.end(),id)!=live.awayXI.end();
+                    };
+                    auto previouslyPlayed=[&](int id){
+                        return onField(id)||
+                            std::find(live.usedHome.begin(),live.usedHome.end(),id)!=live.usedHome.end()||
+                            std::find(live.usedAway.begin(),live.usedAway.end(),id)!=live.usedAway.end();
+                    };
+                    if(!onField(live.ballCarrierId)||!previouslyPlayed(live.previousCarrierId))
+                        throw std::runtime_error("Некорректный игрок с мячом");
+                }else if(live.id>=0){
+                    // v0.14 mid-match saves did not store ownership; resume from
+                    // a valid goalkeeper without discarding career progress.
+                    live.possessionHome=live.possessionTicksH*2>=live.minute;
+                    const auto& xi=live.possessionHome?live.homeXI:live.awayXI;
+                    live.ballCarrierId=-1;
+                    for(int id:xi)if(const Player* p=loaded.findPlayer(id);
+                                     p&&p->position=="GK"){
+                        live.ballCarrierId=id;break;
+                    }
+                    if(live.ballCarrierId<0&&!xi.empty())live.ballCarrierId=xi.front();
+                }
                 readStats(live.playerStats);
             }else if(loaded.live_.id>=0){
                 for(int id:loaded.live_.usedHome)loaded.live_.playerStats.push_back({id});
@@ -3370,6 +3487,26 @@ std::string Game::load(const std::string& path){
             if(loaded.coaches_[loaded.teamId_].vacant)
                 throw std::runtime_error("Ваш клуб не может быть без тренера");
         }
+        loaded.transferHistory_.clear();
+        if(version13){
+            int previousDay=-1;
+            for(size_t i=0,n=size(1000);i<n;++i){
+                TransferRecord transfer;
+                if(!(f>>transfer.season>>transfer.day>>transfer.totalDay>>transfer.playerId
+                      >>transfer.fromClub>>transfer.toClub>>transfer.fee>>transfer.kind)||
+                   transfer.season<2026||transfer.season>loaded.season_||
+                   transfer.day<0||transfer.day>364||transfer.totalDay<0||transfer.totalDay<previousDay||
+                   transfer.totalDay>loaded.totalDays_||transfer.playerId<=0||
+                   transfer.fromClub<0||transfer.fromClub>=int(loaded.clubs_.size())||
+                   transfer.toClub<0||transfer.toClub>=int(loaded.clubs_.size())||
+                   transfer.fromClub==transfer.toClub||transfer.fee<0||transfer.fee>500000000||
+                   transfer.kind<0||transfer.kind>2||!getString(f,transfer.playerName)||
+                   transfer.playerName.empty()||transfer.playerName.size()>400)
+                    throw std::runtime_error("История трансферов");
+                previousDay=transfer.totalDay;
+                loaded.transferHistory_.push_back(std::move(transfer));
+            }
+        }
         if(loaded.teamId_<0||loaded.teamId_>=int(loaded.clubs_.size()))throw std::runtime_error("Ваш клуб");
         for(const auto& c:loaded.clubs_)if(c.id<0||c.id>=int(loaded.clubs_.size())||c.league<0||c.league>=int(loaded.leagues_.size()))throw std::runtime_error("Ссылки клубов");
         for(const auto& p:loaded.players_)if(p.club<0||p.club>=int(loaded.clubs_.size()))throw std::runtime_error("Ссылки игроков");
@@ -3462,7 +3599,7 @@ bool Game::importPlayers(const std::string& path){
             std::istringstream stream(line);
             std::string token;
             while(std::getline(stream,token,';'))fields.push_back(token);
-            if(fields.size()!=5&&fields.size()!=6)continue;
+            if(fields.size()!=5)continue;
             try{
                 const int club=std::stoi(fields[0]);
                 // Exactly the 36 licensed top-division club identities, never
@@ -3516,33 +3653,6 @@ bool Game::importPlayers(const std::string& path){
                 slot->position=pos;
                 slot->age=age;
                 slot->sourceQid=qid;
-                // June 2026 market snapshot. This is source data, unlike
-                // simulated skills, wages and potential.
-                if(fields.size()==6&&!fields[5].empty()){
-                    const long long market=std::stoll(fields[5]);
-                    if(market>=10000&&market<=2000000000LL){
-                        slot->value=int(std::min(market,2000000000LL));
-                        // Use the public valuation as a coarse ability anchor.
-                        // Exact attributes remain gameplay estimates, NOT sourced
-                        // performance ratings.
-                        const int level=clamp(int(53.0+
-                            12.0*std::log10(std::max(0.01,double(market)/1000000.0))),
-                            43,91);
-                        const int current=playerRating(*slot);
-                        const int delta=std::clamp(level-current,-19,19);
-                        for(int& skill:slot->skill)
-                            skill=clamp(skill+delta,10,99);
-                        if(pos=="GK")slot->skill[9]=clamp(
-                            std::max(slot->skill[9],level+2),10,99);
-                        else if(pos=="DC"||pos=="DL"||pos=="DR")
-                            slot->skill[3]=clamp(
-                                std::max(slot->skill[3],level+2),10,99);
-                        else if(pos=="ST")slot->skill[1]=clamp(
-                            std::max(slot->skill[1],level+2),10,99);
-                        else slot->skill[2]=clamp(
-                            std::max(slot->skill[2],level+2),10,99);
-                    }
-                }
                 slot->potential=clamp(std::max(slot->potential,
                    playerRating(*slot)+std::max(0,27-age)/3),20,99);
                 ++imported;
