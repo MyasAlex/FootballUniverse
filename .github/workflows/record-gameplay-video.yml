@@ -1,0 +1,34 @@
+name: Record real Football Universe gameplay video
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/record-gameplay-video.yml'
+      - 'tools/capture_marketing_video.ps1'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  record:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41326392411
+          github-token: ${{ github.token }}
+          name: FootballUniverse-Windows-EXE
+          path: dist/FootballUniverse
+      - name: Record gameplay and player database from real Windows program
+        shell: pwsh
+        run: ./tools/capture_marketing_video.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FootballUniverse-Real-Gameplay-Frames
+          path: marketing/video-frames/*
+          if-no-files-found: error
+          retention-days: 7
