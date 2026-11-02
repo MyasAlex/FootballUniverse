@@ -12,6 +12,8 @@ public static class MarketingCapture {
   public struct Rect { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")] public static extern IntPtr GetDlgItem(IntPtr hwnd, int id);
   [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd, uint msg, IntPtr wp, IntPtr lp);
+  [DllImport("user32.dll", EntryPoint="SendMessageW", CharSet=CharSet.Unicode)]
+  public static extern IntPtr SendMessageText(IntPtr hwnd, uint msg, IntPtr wp, [MarshalAs(UnmanagedType.LPWStr)] string text);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int w, int h, uint flags);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
   [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
@@ -111,14 +113,28 @@ try {
   Switch-Page $hwnd 19
   Take-Snapshot $hwnd '05-analytics'
   Switch-Page $hwnd 21
-  Start-Sleep -Milliseconds 850
+  # Show a recognizable authentic catalogue identity rather than an obscure first entry.
+  $query=[MarketingCapture]::GetDlgItem($hwnd,700)
+  [MarketingCapture]::SendMessageText($query, 0x000C, [IntPtr]::Zero, 'Ronaldo') | Out-Null
+  [MarketingCapture]::SendMessage($hwnd, 0x111, [IntPtr]705, [IntPtr]::Zero) | Out-Null
+  $list=[MarketingCapture]::GetDlgItem($hwnd,501)
+  [MarketingCapture]::SendMessage($list, 0x0186, [IntPtr]0, [IntPtr]::Zero) | Out-Null
+  [MarketingCapture]::SendMessage($hwnd, 0x111, [IntPtr](501 + 65536), [IntPtr]::Zero) | Out-Null
   Take-Snapshot $hwnd '06-global-players'
 
+  # Advance to the first fixture. Game.advance() stops at match day,
+  # so extra calls do not skip over the match.
+  Switch-Page $hwnd 0
+  for($i=0;$i -lt 6;$i++){
+    [MarketingCapture]::SendMessage($hwnd, 0x111, [IntPtr]300, [IntPtr]::Zero) | Out-Null
+  }
   Switch-Page $hwnd 4
   [MarketingCapture]::SendMessage($hwnd, 0x111, [IntPtr]300, [IntPtr]::Zero) | Out-Null
-  Start-Sleep -Milliseconds 500
+  Start-Sleep -Milliseconds 350
   [MarketingCapture]::SendMessage($hwnd, 0x111, [IntPtr]300, [IntPtr]::Zero) | Out-Null
-  Start-Sleep -Milliseconds 500
+  Start-Sleep -Milliseconds 350
+  [MarketingCapture]::SendMessage($hwnd, 0x111, [IntPtr]300, [IntPtr]::Zero) | Out-Null
+  Start-Sleep -Milliseconds 350
   Take-Snapshot $hwnd '07-live-match'
   $count = @(Get-ChildItem $out -Filter '*.png' | Where-Object { $_.Name -notlike '*-desktop*' }).Count
   if ($count -ne 7) { throw "Expected 7 screenshots, got $count" }
