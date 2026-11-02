@@ -1,0 +1,32 @@
+name: Football Universe genuine screenshots
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/capture-screenshots.yml'
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  screenshot:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: 41326392411
+          github-token: ${{ github.token }}
+          name: FootballUniverse-Windows-EXE
+          path: dist/FootballUniverse
+      - name: Capture screenshots of real game
+        shell: pwsh
+        run: ./tools/capture_marketing_screenshots.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: FootballUniverse-0.16-Screenshots
+          path: marketing/screenshots/*.png
+          if-no-files-found: error
