@@ -1,0 +1,92 @@
+name: Publish Football Universe v0.17.0
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-release-v017.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download validated Windows build
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41377998426" --jq '.head_sha')"
+          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41377998426" --jq '.conclusion')"
+          test "$run_sha" = "e945237deb2bdeeb038e60c81934eb45c6b359c5"
+          test "$conclusion" = "success"
+          gh run download 41377998426 --repo "$GITHUB_REPOSITORY" --name FootballUniverse-Windows-EXE --dir dist/FootballUniverse
+      - name: Validate portable game and database
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/FootballUniverse/FootballUniverse.exe
+          test -s dist/FootballUniverse/PLAY.bat
+          test -s dist/FootballUniverse/data/world_players.csv
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          meta=json.loads(Path("dist/FootballUniverse/data/world_players_meta.json").read_text("utf-8"))
+          assert meta["players_written"]>=250000,meta
+          print("World football identities:",meta["players_written"])
+          PY
+          (cd dist/FootballUniverse && zip -q -r ../../FootballUniverse-0.17.0-Windows-x64.zip .)
+          sha256sum FootballUniverse-0.17.0-Windows-x64.zip > SHA256SUMS.txt
+      - name: Publish free Football Universe 0.17.0 GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > RELEASE_NOTES.md <<'EOF'
+          ## Football Universe 0.17.0 — World Scouting Watchlist
+
+          **Free early-access football management game for Windows x64**, written in C++20.
+
+          ### What's new
+          - Follow up to **500 footballers** from the offline global player catalogue.
+          - **Personal scouting notes** for watched players; favorites-only filtered browsing.
+          - The scouting watchlist and notes are saved **with each career**, including save slots and backups.
+          - Faster indexed identity lookup within the 255k-player worldwide catalogue.
+          - New save format `FUSAVE_16` loads previous supported careers, including v0.16 (`FUSAVE_15`).
+
+          ### Existing gameplay
+          - A searchable offline catalogue of **255,041 real player identity records** covering **268 countries and territories** in the source.
+          - Football tactics, animated 2D match, adaptive AI coaches, transfers, club management, training, board and match analytics.
+          - Offline single-player Windows game, no runtime internet required.
+
+          **Important data distinction:** the global catalogue is an identity reference database, NOT verified November 2026 club rosters or 255,041 simultaneously simulated players. The playable world is still 72 simulated clubs. World watchlist entries don't imply real contracts or transferable free agents. In sandbox mode, any imported skills and contracts are generated for gameplay, not factual claims.
+
+          ### Installation
+          1. Download the **Windows-x64.zip** asset below.
+          2. Extract all files to a **new folder**.
+          3. Run `PLAY.bat` or `FootballUniverse.exe`.
+          4. **Back up `career.fus` and the `saves/` directory** before transferring careers. Older versions cannot read the newer `FUSAVE_16` format.
+
+          ### Tests and feedback
+          Windows compilation, **23/23 C++ tests**, GUI startup, navigation and resize smoke tests, and bundled world database checks passed: [validated Windows run](https://github.com/MyasAlex/FootballUniverse/actions/runs/41377998426).
+
+          Report bugs and ideas via [GitHub Issues](https://github.com/MyasAlex/FootballUniverse/issues).
+
+          Source code: https://github.com/MyasAlex/FootballUniverse.
+          World player dataset: Reep v0 (CC0 1.0); third-party credits in the download archive.
+          EOF
+          if gh release view v0.17.0 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload v0.17.0 FootballUniverse-0.17.0-Windows-x64.zip SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create v0.17.0 FootballUniverse-0.17.0-Windows-x64.zip SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --target a40a2cb59bea23d42426f5f92355fb74718a9377 \
+              --title "Football Universe 0.17.0 — World Scouting Watchlist" \
+              --notes-file RELEASE_NOTES.md --latest
+          fi
