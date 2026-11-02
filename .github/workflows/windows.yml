@@ -60,12 +60,12 @@ jobs:
           start "" "FootballUniverse.exe"
           '@ | Set-Content "$folder/PLAY.bat" -Encoding Ascii
           @'
-          Football Universe 0.16.0 - Windows x64
+          Football Universe 0.17.0 - Windows x64
           Run PLAY.bat or FootballUniverse.exe.
           C++ and Visual Studio are NOT required to run.
           Save files (career.fus) remain in the game folder if started through PLAY.bat.
-          Includes global player identity catalogue, scouting filters, AI bench decisions and club management. Global identities are not verified current club rosters.
-          Save files from v0.14 (FUSAVE_13) can be loaded; new saves use FUSAVE_15.
+          Includes global player identity catalogue, scouting filters, AI bench decisions and club management. Global identities are not verified current club rosters. World scouting watchlists and notes are stored in career saves.
+          Save files from v0.14 (FUSAVE_13) can be loaded; new saves use FUSAVE_16.
           Back up your original career.fus before installing.
           Windows GUI launch, UI panel layout and game-engine tests are checked in CI.
           '@ | Set-Content "$folder/READ_FIRST.txt" -Encoding UTF8

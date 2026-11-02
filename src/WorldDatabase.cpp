@@ -82,11 +82,38 @@ bool WorldDatabase::load(const std::string& path){
         if(loaded.size()>=500000)break; // bounded for untrusted CSV
     }
     if(loaded.empty()){error_="Каталог не содержит корректных записей.";return false;}
+    std::unordered_map<std::string,size_t> index;
+    index.reserve(loaded.size());
+    for(size_t i=0;i<loaded.size();++i)index.emplace(loaded[i].id,i);
     players_=std::move(loaded);
+    idLookup_=std::move(index);
     error_.clear();return true;
 }
 const WorldPlayer* WorldDatabase::at(size_t i)const{
     return i<players_.size()?&players_[i]:nullptr;
+}
+std::optional<size_t> WorldDatabase::indexById(const std::string& id) const{
+    const auto found=idLookup_.find(id);
+    if(found==idLookup_.end())return std::nullopt;
+    return found->second;
+}
+WorldResults WorldDatabase::searchWatched(const WorldQuery& q,
+                                           const std::vector<std::string>& watchIds) const{
+    WorldResults result;
+    const auto name=lower(q.name),position=lower(q.position),country=lower(q.country);
+    const size_t limit=std::min(size_t(250),q.limit);
+    for(const auto& id:watchIds){
+        auto idx=indexById(id);
+        if(!idx)continue;  // The snapshot changed or the CSV is unavailable.
+        const auto& p=players_[*idx];
+        if(q.maxAge>0&&(p.age<=0||p.age>q.maxAge))continue;
+        if(!containsInsensitive(p.name,name)||!matchPosition(p.position,position)||
+           !containsInsensitive(p.nationality,country))continue;
+        if(result.total>=q.offset&&result.indices.size()<limit)
+            result.indices.push_back(*idx);
+        ++result.total;
+    }
+    return result;
 }
 WorldResults WorldDatabase::search(const WorldQuery& q) const{
     WorldResults result;

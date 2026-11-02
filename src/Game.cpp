@@ -3,6 +3,7 @@
 #include "TacticalModel.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -61,7 +62,7 @@ int playerRating(const Player& p){
 Game::Game():rng_(20261030U){ newCareer("Менеджер", 0, Role::Coach, Difficulty::Realistic,{0,1}); }
 int Game::random(int lo,int hi){return std::uniform_int_distribution<int>(lo,hi)(rng_);}
 void Game::seedWorld(){
-    leagues_.clear();clubs_.clear();players_.clear();matches_.clear();cups_.clear();trophies_.clear();leagueHistory_.clear();movements_.clear();coaches_.clear();job_={};reputation_=55;archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();transferHistory_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;lastBoardRequestSeason_=-1;live_={};
+    worldWatchlist_.clear();leagues_.clear();clubs_.clear();players_.clear();matches_.clear();cups_.clear();trophies_.clear();leagueHistory_.clear();movements_.clear();coaches_.clear();job_={};reputation_=55;archive_.clear();inbox_.clear();scouts_.clear();deals_.clear();transferHistory_.clear();payments_.clear();staff_.clear();youth_.clear();relations_.clear();nextStaffId_=1;nextProspectId_=1;lastYouthSearchDay_=-45;lastTeamTalkDay_=-30;lastBoardRequestSeason_=-1;live_={};
     const std::vector<std::tuple<std::string,std::string,std::vector<std::string>>> definitions={
       {"Англия","Премьер-лига",{"Арсенал","Ливерпуль","Манчестер Сити","Челси","Манчестер Юнайтед","Тоттенхэм"}},
       {"Испания","Ла Лига",{"Реал Мадрид","Барселона","Атлетико","Атлетик Бильбао","Вильярреал","Реал Сосьедад"}},
@@ -1055,6 +1056,47 @@ std::string Game::addWorldPlayerToSandbox(const WorldPlayer& identity){
             "Его навыки и контракт вымышлены; это НЕ подтверждённый реальный трансфер.";
     addMessage("Игрок из мировой базы",status_);
     return status_;
+}
+
+// Career-local identity watchlist. This does not invent real-world club contracts
+// and never creates an active transfer candidate or fictional scouting rating.
+const WorldWatch* Game::watchedWorldPlayer(const std::string& id) const {
+    for(const auto& watch:worldWatchlist_)if(watch.sourceId==id)return &watch;
+    return nullptr;
+}
+std::string Game::toggleWorldWatch(const WorldPlayer& identity){
+    auto it=std::find_if(worldWatchlist_.begin(),worldWatchlist_.end(),
+        [&](const WorldWatch& watch){return watch.sourceId==identity.id;});
+    if(it!=worldWatchlist_.end()){
+        worldWatchlist_.erase(it);
+        return status_="Футболист удалён из списка наблюдения: "+identity.name;
+    }
+    if(identity.id.size()<8||identity.id.size()>40||
+       identity.id.rfind("reep_p",0)!=0||
+       !std::all_of(identity.id.begin(),identity.id.end(),[](unsigned char c){
+           return std::isalnum(c)||c=='_';})||
+       identity.name.empty()||identity.name.size()>140||
+       identity.position.size()>70||identity.nationality.size()>70)
+        return status_="Недопустимый идентификатор или запись каталога.";
+    if(worldWatchlist_.size()>=500)
+        return status_="Список наблюдения заполнен (максимум 500 футболистов).";
+    worldWatchlist_.push_back({identity.id,identity.name,identity.position,
+                                identity.nationality,"",totalDays_});
+    return status_="Добавлен в список наблюдения: "+identity.name;
+}
+std::string Game::noteWorldWatch(const WorldPlayer& identity,const std::string& note){
+    if(note.size()>400)return status_="Заметка слишком длинная (не более 400 байт).";
+    if(std::any_of(note.begin(),note.end(),[](unsigned char c){
+        return c<32&&c!=9;
+    }))return status_="Заметка содержит недопустимые управляющие символы.";
+    if(!watchedWorldPlayer(identity.id)){
+        const std::string result=toggleWorldWatch(identity);
+        if(!watchedWorldPlayer(identity.id))return result;
+    }
+    auto it=std::find_if(worldWatchlist_.begin(),worldWatchlist_.end(),
+        [&](const WorldWatch& watch){return watch.sourceId==identity.id;});
+    it->note=note;
+    return status_="Скаутская заметка сохранена для "+identity.name;
 }
 
 std::vector<int> Game::ownPlayers() const {std::vector<int> r;for(const auto& p:players_)if(p.club==teamId_)r.push_back(p.id);return r;}
@@ -3387,7 +3429,7 @@ void Game::toggleLeague(int leagueId){
 std::string Game::save(const std::string& path)const{
     std::ofstream f(path,std::ios::binary|std::ios::trunc);
     if(!f)return "Не удалось открыть файл для записи: "+path;
-    f<<"FUSAVE_15\n";
+    f<<"FUSAVE_16\n";
     putString(f,manager_);putString(f,status_);
     f<<teamId_<<' '<<day_<<' '<<season_<<' '<<totalDays_<<' '<<nextPlayerId_<<' '<<int(role_)<<' '<<int(difficulty_)<<'\n';
     std::ostringstream rand;rand<<rng_;putString(f,rand.str());
@@ -3515,15 +3557,22 @@ std::string Game::save(const std::string& path)const{
         putString(f,transfer.playerName);
     }
     f<<lastBoardRequestSeason_<<'\n';
+    f<<worldWatchlist_.size()<<'\n';
+    for(const auto& w:worldWatchlist_){
+        putString(f,w.sourceId);putString(f,w.name);
+        putString(f,w.position);putString(f,w.nationality);
+        putString(f,w.note);f<<w.addedDay<<'\n';
+    }
     return f.good()?"Карьера сохранена: "+path:"Ошибка записи сохранения";
 }
 std::string Game::load(const std::string& path){
     std::ifstream f(path,std::ios::binary);
     if(!f)return "Файл сохранения не найден: "+path;
     std::string header;std::getline(f,header);
-    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12"&&header!="FUSAVE_13"&&header!="FUSAVE_14"&&header!="FUSAVE_15")return "Неверный формат или версия сохранения";
+    if(header!="FUSAVE_3"&&header!="FUSAVE_4"&&header!="FUSAVE_5"&&header!="FUSAVE_6"&&header!="FUSAVE_7"&&header!="FUSAVE_8"&&header!="FUSAVE_9"&&header!="FUSAVE_10"&&header!="FUSAVE_11"&&header!="FUSAVE_12"&&header!="FUSAVE_13"&&header!="FUSAVE_14"&&header!="FUSAVE_15"&&header!="FUSAVE_16")return "Неверный формат или версия сохранения";
     const bool legacy=(header=="FUSAVE_3");
-    const bool version15=(header=="FUSAVE_15");
+    const bool version16=(header=="FUSAVE_16");
+    const bool version15=(header=="FUSAVE_15"||version16);
     const bool version14=(header=="FUSAVE_14"||version15);
     const bool version13=(header=="FUSAVE_13"||version14);
     const bool version12=(header=="FUSAVE_12"||version13);
@@ -3965,6 +4014,26 @@ std::string Game::load(const std::string& path){
             loaded.lastBoardRequestSeason_< -1||
             loaded.lastBoardRequestSeason_>loaded.season_))
             throw std::runtime_error("Запрос бюджета совета");
+        if(version16){
+            std::unordered_set<std::string> ids;
+            for(size_t i=0,n=size(500);i<n;++i){
+                WorldWatch watch;
+                if(!getString(f,watch.sourceId)||!getString(f,watch.name)||
+                   !getString(f,watch.position)||!getString(f,watch.nationality)||
+                   !getString(f,watch.note)||!(f>>watch.addedDay)||
+                   watch.sourceId.size()<8||watch.sourceId.size()>40||
+                   watch.sourceId.rfind("reep_p",0)!=0||
+                   !std::all_of(watch.sourceId.begin(),watch.sourceId.end(),[](unsigned char c){
+                       return std::isalnum(c)||c=='_';})||
+                   !ids.insert(watch.sourceId).second||
+                   watch.name.empty()||watch.name.size()>140||
+                   watch.position.size()>70||watch.nationality.size()>70||
+                   watch.note.size()>400||watch.addedDay<0||
+                   watch.addedDay>loaded.totalDays_)
+                    throw std::runtime_error("Повреждён список наблюдения");
+                loaded.worldWatchlist_.push_back(std::move(watch));
+            }
+        }
         if(loaded.teamId_<0||loaded.teamId_>=int(loaded.clubs_.size()))throw std::runtime_error("Ваш клуб");
         for(const auto& c:loaded.clubs_)if(c.id<0||c.id>=int(loaded.clubs_.size())||c.league<0||c.league>=int(loaded.leagues_.size()))throw std::runtime_error("Ссылки клубов");
         for(const auto& p:loaded.players_)if(p.club<0||p.club>=int(loaded.clubs_.size()))throw std::runtime_error("Ссылки игроков");
