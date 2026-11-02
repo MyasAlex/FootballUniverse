@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - '.github/workflows/capture-screenshots.yml'
+      - 'tools/capture_marketing_screenshots.ps1'
 
 permissions:
   actions: read
