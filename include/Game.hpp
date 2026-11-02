@@ -134,6 +134,11 @@ struct LiveMatch {
     std::vector<MatchPlayerStat> playerStats;
 };
 
+struct WorldWatch {
+    std::string sourceId, name, position, nationality, note;
+    int addedDay=0;
+};
+
 enum class Role : int { Coach=0, Director=1, Owner=2, President=3, Sandbox=4 };
 enum class Difficulty : int { Easy=0, Realistic=1, Hard=2, Free=3 };
 enum class TacticalPlan : int { Balanced=0, Possession=1, Gegenpress=2, Counter=3, ProtectLead=4 };
@@ -204,6 +209,10 @@ public:
     Club& myClub();
     const Player* findPlayer(int id) const;
     std::string addWorldPlayerToSandbox(const WorldPlayer& identity);
+    const std::vector<WorldWatch>& worldWatchlist() const { return worldWatchlist_; }
+    const WorldWatch* watchedWorldPlayer(const std::string& sourceId) const;
+    std::string toggleWorldWatch(const WorldPlayer& identity);
+    std::string noteWorldWatch(const WorldPlayer& identity, const std::string& note);
     const Club* findClub(int id) const;
     int teamId() const { return teamId_; }
     int day() const { return day_; }
@@ -301,6 +310,7 @@ private:
     std::vector<ScoutReport> scouts_;
     std::vector<TransferDeal> deals_;
     std::vector<TransferRecord> transferHistory_;
+    std::vector<WorldWatch> worldWatchlist_;
     std::vector<DeferredPayment> payments_;
     std::vector<StaffMember> staff_;
     std::vector<YouthProspect> youth_;

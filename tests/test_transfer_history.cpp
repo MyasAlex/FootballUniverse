@@ -33,7 +33,7 @@ std::string makeV14(const std::string& source){
     std::istringstream in(source);
     std::vector<std::string> lines;std::string line;
     while(std::getline(in,line))lines.push_back(std::move(line));
-    assert(lines.size()>10&&lines[0]=="FUSAVE_15");
+    assert(lines.size()>10&&lines[0]=="FUSAVE_16");
     lines[0]="FUSAVE_14";
     const size_t leagues=std::stoul(lines.at(5));
     size_t i=6+leagues*3;
@@ -52,7 +52,9 @@ std::string makeV14(const std::string& source){
         row="1 -1 -1 0 0";found=true;break;
     }
     assert(found);
-    assert(lines.back()=="-1"); // last board budget request season
+    assert(lines.back()=="0"); // empty v16 watchlist count
+    lines.pop_back();
+    assert(lines.back()=="-1"); // v15 board budget request season
     lines.pop_back();
     std::ostringstream out;
     for(const auto& row:lines)out<<row<<'\n';
@@ -79,8 +81,8 @@ int main(){
     const auto main=files.path("current.fus");
     assert(game.save(main).find("сохранена")!=std::string::npos);
     const auto original=read(main);
-    assert(original.starts_with("FUSAVE_15\n"));
-    assert(original.ends_with("-1\n"));
+    assert(original.starts_with("FUSAVE_16\n"));
+    assert(original.ends_with("-1\n0\n"));
     // v14 adds the live ball state. Recreate an actual v13 save by removing
     // those extra five fields before testing the historical v12 migration.
     auto old14=makeV14(original);
@@ -105,7 +107,7 @@ int main(){
     assert(migrated.day()==game.day()&&migrated.manager()==game.manager());
     assert(migrated.players().size()==game.players().size());
     assert(migrated.save(files.path("migrated13.fus")).find("сохранена")!=std::string::npos);
-    assert(read(files.path("migrated13.fus")).starts_with("FUSAVE_15\n"));
+    assert(read(files.path("migrated13.fus")).starts_with("FUSAVE_16\n"));
 
     const int sold=game.ownPlayers().back();
     const auto name=game.findPlayer(sold)->name;

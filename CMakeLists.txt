@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(FootballUniverse VERSION 0.16.0 LANGUAGES CXX)
+project(FootballUniverse VERSION 0.17.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Link the MSVC runtime statically so players do not need Visual C++ installed.
@@ -128,3 +128,7 @@ add_test(NAME tactical_board_analytics_ai_substitutions COMMAND fu_major_update_
 add_executable(fu_world_database_tests tests/test_world_database.cpp)
 target_link_libraries(fu_world_database_tests PRIVATE fu_core)
 add_test(NAME huge_global_football_index COMMAND fu_world_database_tests)
+
+add_executable(fu_watchlist_tests tests/test_world_watchlist.cpp)
+target_link_libraries(fu_watchlist_tests PRIVATE fu_core)
+add_test(NAME world_scouting_watchlist_and_save_migration COMMAND fu_watchlist_tests)

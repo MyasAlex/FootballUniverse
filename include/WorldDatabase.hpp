@@ -1,6 +1,8 @@
 #pragma once
 #include <cstddef>
 #include <string>
+#include <optional>
+#include <unordered_map>
 #include <vector>
 
 namespace fu {
@@ -27,8 +29,12 @@ public:
     const WorldPlayer* at(size_t index) const;
     const std::string& error() const { return error_; }
     WorldResults search(const WorldQuery& query) const;
+    std::optional<size_t> indexById(const std::string& id) const;
+    WorldResults searchWatched(const WorldQuery& query,
+                               const std::vector<std::string>& watchIds) const;
 private:
     std::vector<WorldPlayer> players_;
+    std::unordered_map<std::string,size_t> idLookup_;
     std::string error_;
 };
 }

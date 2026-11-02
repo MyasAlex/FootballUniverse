@@ -133,7 +133,7 @@ void presetsAndPermissions(const TemporaryFiles& files){
     assert(settings(game.myClub())==beforeInvalid);
     const auto save=files.file("plan.fus");
     assert(game.save(save).find("сохранена")!=std::string::npos);
-    assert(read(save).rfind("FUSAVE_15\n",0)==0);
+    assert(read(save).rfind("FUSAVE_16\n",0)==0);
     fu::Game loaded;
     assert(loaded.load(save).find("загружена")!=std::string::npos);
     assert(settings(loaded.myClub())==settings(game.myClub()));
